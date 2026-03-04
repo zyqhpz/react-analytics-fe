@@ -1,7 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import { IoArrowBack } from "react-icons/io5";
-import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
-
+import { getAuthHeaders } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,7 +17,12 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import { useEffect, useMemo, useState } from "react";
+import { FaCheckCircle } from "react-icons/fa";
+import { IoArrowBack } from "react-icons/io5";
+import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 
 type Aggregation = {
     func: string;
@@ -79,6 +81,11 @@ export default function App() {
     const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
     const [results, setResults] = useState<any[]>([]);
 
+    const [queryName, setQueryName] = useState("");
+    const [queryDescription, setQueryDescription] = useState("");
+
+    const [testSuccess, setTestSuccess] = useState(false);
+
     const navigate = useNavigate();
 
     const getAllColumns = () => {
@@ -121,7 +128,9 @@ export default function App() {
 
     // 🔥 Fetch schema from backend
     useEffect(() => {
-        fetch("http://localhost:8080/api/v1/query/schemas")
+        fetch("http://localhost:8080/api/v1/query/schemas", {
+            headers: getAuthHeaders(),
+        })
             .then((res) => res.json())
             .then((data) => {
                 // map response to GetSchemasResponse type
@@ -259,12 +268,92 @@ export default function App() {
 
         const res = await fetch("http://localhost:8080/api/v1/query/test", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: getAuthHeaders(),
             body: JSON.stringify(payload),
         });
 
         const data = await res.json();
-        setResults(data.data || []);
+
+        if (res.ok) {
+            setTestSuccess(true);
+            toast.success("Query test successful.");
+            setResults(data.data || []);
+        } else {
+            setTestSuccess(false);
+            toast.error("Query test failed. Please check your configuration.", {
+                description: (
+                    <span className="text-muted-foreground">
+                        Status:{" "}
+                        <span className="text-red-500 font-semibold">
+                            {res.status} {res.statusText}
+                        </span>
+                        <br />
+                        Description: {data?.error || "Unknown error"}
+                    </span>
+                ),
+            });
+            setResults([]);
+        }
+    };
+
+    useEffect(() => {
+        setTestSuccess(false);
+    }, [
+        table,
+        joins,
+        selectedColumns,
+        aggregations,
+        groupBy,
+        query,
+        having,
+        orderBy,
+    ]);
+
+    const saveQuery = async () => {
+        const config = {
+            table,
+            joins,
+            select: selectedColumns,
+            aggregations,
+            group_by: groupBy,
+            where: query,
+            having,
+            order_by: orderBy,
+            limit: 100,
+        };
+
+        const payload = {
+            name: queryName,
+            description: queryDescription,
+            query_type: "visual",
+            config,
+        };
+
+        const res = await fetch("http://localhost:8080/api/v1/query", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+            toast.success("Query saved successfully.");
+            setQueryName("");
+            setQueryDescription("");
+        } else {
+            const data = await res.json();
+            toast.error("Failed to save query.", {
+                description: (
+                    <span className="text-muted-foreground">
+                        Status:{" "}
+                        <span className="text-red-500 font-semibold">
+                            {res.status} {res.statusText}
+                        </span>
+                        <br />
+                        Description: {data?.error || "Unknown error"}
+                    </span>
+                ),
+            });
+        }
     };
 
     const orderFields = [
@@ -662,7 +751,7 @@ export default function App() {
             </Card>
 
             {/* RUN QUERY */}
-            <div>
+            <div className="flex items-center gap-3">
                 <Button
                     size="lg"
                     onClick={runQuery}
@@ -670,7 +759,46 @@ export default function App() {
                 >
                     Run Query
                 </Button>
+
+                {testSuccess && (
+                    <div className="flex items-center text-green-600 gap-2">
+                        <FaCheckCircle />
+                        <span className="text-sm font-medium">Query test successful</span>
+                    </div>
+                )}
             </div>
+
+            {/* SAVE QUERY */}
+            <Card>
+                <CardHeader>
+                    <CardTitle>Save Query</CardTitle>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
+                    <input
+                        type="text"
+                        placeholder="Query Name"
+                        value={queryName}
+                        onChange={(e) => setQueryName(e.target.value)}
+                        className="w-full border rounded px-3 py-2"
+                    />
+
+                    <textarea
+                        placeholder="Description"
+                        value={queryDescription}
+                        onChange={(e) => setQueryDescription(e.target.value)}
+                        className="w-full border rounded px-3 py-2"
+                    />
+
+                    <Button
+                        onClick={saveQuery}
+                        disabled={!testSuccess}
+                        className="cursor-pointer hover:scale-105 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        Save Query
+                    </Button>
+                </CardContent>
+            </Card>
 
             {/* RESULTS */}
             {results.length > 0 && (

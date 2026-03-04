@@ -1,3 +1,4 @@
+import { Toaster } from "@/components/ui/sonner";
 import AnalyticsQueryBuilder from "@/pages/AnalyticsQueryBuilder";
 import PopulationDashboard from "@/pages/PopulationDashboard";
 import React from "react";
@@ -19,6 +20,7 @@ const App: React.FC = () => {
         {/* 404 fallback */}
         <Route path="*" element={<div>404 - Page Not Found</div>} />
       </Routes>
+      <Toaster />
     </BrowserRouter>
   );
 };

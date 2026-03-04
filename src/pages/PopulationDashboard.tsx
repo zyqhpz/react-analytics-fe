@@ -1,3 +1,4 @@
+import { getAuthHeaders } from "@/api/client";
 import * as echarts from "echarts";
 import { GridStack, type GridStackNode, type GridStackWidget } from "gridstack";
 import "gridstack/dist/gridstack.min.css";
@@ -325,7 +326,7 @@ export default function PopulationDashboard() {
             // Replace with your real endpoint
             await fetch("http://localhost:8080/api/v1/widgets", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: getAuthHeaders(),
                 body: JSON.stringify(payload),
             });
 
@@ -346,14 +347,14 @@ export default function PopulationDashboard() {
         const response = await fetch(
             `http://localhost:8080/api/v1/dashboards/${DASHBOARD_ID}/widgets`,
             {
-                headers: {
-                    accept: "application/json",
-                    // ⚠️ Don’t hardcode tokens in real apps. Use env vars + server proxy.
-                    authorization:
-                        "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMDE5YzI3YzEtOTIxOS03NmViLWI0ZTgtNDc3MmMwOWFiMDUxIiwiZW1haWwiOiJhZG1pbkBsZWFuaXMuY29tLm15Iiwic2Vzc2lvbl90b2tlbiI6IjAxOWM3NGYxLWRjYzktNzQxMS04Mzk0LTg2YzEyZTU0NDIzNSIsInJvbGUiOiJTVVBFUl9BRE1JTiIsImRlcGFydG1lbnQiOiJhZG1pbiIsImV4cCI6MTc3MTU3NDk0NiwiaWF0IjoxNzcxNDg4NTQ2fQ.Ezp98vWtnAVJ7BFd1mfivuNfOcfMffBYfJJoFg3PoeA",
-                },
+                headers: getAuthHeaders(),
             },
         );
+
+        if (response.status === 401) {
+            getAuthHeaders();
+            return;
+        }
 
         const result = await response.json();
 
