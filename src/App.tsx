@@ -1,6 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
 
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
 type Aggregation = {
   func: string;
   field: string;
@@ -169,12 +188,43 @@ export default function App() {
     });
   };
 
-  const addJoin = (joinTable: string) => {
+  const toggleJoin = (joinTable: string) => {
     setJoins((prev) => {
-      if (prev.some((j) => j.table === joinTable)) return prev;
+      const exists = prev.some((j) => j.table === joinTable);
+
+      if (exists) {
+        return prev.filter((j) => j.table !== joinTable);
+      }
+
       return [...prev, { table: joinTable }];
     });
   };
+
+  useEffect(() => {
+    setSelectedColumns((prev) =>
+      prev.filter((col) => {
+        if (!col.includes(".")) return true;
+        const [tbl] = col.split(".");
+        return joins.some((j) => j.table === tbl);
+      }),
+    );
+
+    setGroupBy((prev) =>
+      prev.filter((col) => {
+        if (!col.includes(".")) return true;
+        const [tbl] = col.split(".");
+        return joins.some((j) => j.table === tbl);
+      }),
+    );
+
+    setOrderBy((prev) =>
+      prev.filter((o) => {
+        if (!o.field.includes(".")) return true;
+        const [tbl] = o.field.split(".");
+        return joins.some((j) => j.table === tbl);
+      }),
+    );
+  }, [joins]);
 
   const addOrder = (field: string) => {
     setOrderBy([...orderBy, { field, direction: "ASC" }]);
@@ -213,218 +263,433 @@ export default function App() {
     setResults(data.data || []);
   };
 
-  if (!schema || !tableSchema) return <div>Loading schema...</div>;
+  const orderFields = [
+    ...getAllColumns(),
+    ...aggregationAliases.map((alias) => ({
+      name: alias,
+      label: alias,
+    })),
+  ];
 
-  console.log("Joins:", joins);
-  console.log("Schema tables:", schema?.tables);
+  if (!schema || !tableSchema) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        Loading schema...
+      </div>
+    );
+  }
 
   return (
-    <div style={{ maxWidth: 1200, margin: "40px auto" }}>
-      <h1>Advanced Report Builder</h1>
+    <div className="container mx-auto py-10 space-y-8">
+      <h1 className="text-3xl font-bold">Advanced Report Builder</h1>
 
       {/* TABLE SELECT */}
-      <div>
-        <label>Table: </label>
-        <select
-          value={table}
-          onChange={(e) => {
-            setTable(e.target.value);
-            setJoins([]); // reset joins when table changes
-            setSelectedColumns([]); // reset selected columns
-            setAggregations([]); // reset aggregation
-            setGroupBy([]); // reset group by
-            setOrderBy([]); // reset order by
-            setQuery({ combinator: "and", rules: [] }); // reset where
-            setHaving({ combinator: "and", rules: [] }); // reset having
-          }}
-        >
-          {Object.keys(schema.tables).map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Select Table</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Select
+            value={table}
+            onValueChange={(value) => {
+              setTable(value);
+              setJoins([]);
+              setSelectedColumns([]);
+              setAggregations([]);
+              setGroupBy([]);
+              setOrderBy([]);
+              setQuery({ combinator: "and", rules: [] });
+              setHaving({ combinator: "and", rules: [] });
+            }}
+          >
+            <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+              <SelectValue placeholder="Select table" />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.keys(schema.tables).map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CardContent>
+      </Card>
 
       {/* JOINS */}
       {tableSchema.relations && (
-        <>
-          <h3>Join Tables</h3>
-          {Object.keys(tableSchema.relations).map((jt) => (
-            <button key={jt} onClick={() => addJoin(jt)}>
-              Join {jt}
-            </button>
-          ))}
-        </>
+        <Card>
+          <CardHeader>
+            <CardTitle>Join Tables</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-3">
+            {Object.keys(tableSchema.relations).map((jt) => {
+              const active = joins.some((j) => j.table === jt);
+
+              return (
+                <Button
+                  key={jt}
+                  variant="secondary"
+                  onClick={() => toggleJoin(jt)}
+                  className={`
+                    cursor-pointer transition-all
+                    hover:scale-105
+                    active:scale-95
+                    ${active
+                      ? "bg-gray-600 hover:bg-gray-700 text-white border-gray-700"
+                      : "hover:bg-muted"
+                    }
+                  `}
+                >
+                  {active ? "Unjoin" : "Join"} {jt}
+                </Button>
+              );
+            })}
+          </CardContent>
+        </Card>
       )}
 
-      {/* SELECT */}
-      <h3>Select Columns</h3>
-      {getAllColumns().map((col) => (
-        <label key={col.name} style={{ marginRight: 12 }}>
-          <input
-            type="checkbox"
-            checked={selectedColumns.includes(col.name)}
-            onChange={() => toggleColumn(col.name)}
-          />
-          {col.label}
-        </label>
-      ))}
-
-      {/* AGGREGATION */}
-      <h3>Aggregations</h3>
-
-      <select id="aggFunc">
-        <option value="">Select Function</option>
-        <option value="SUM">SUM</option>
-        <option value="COUNT">COUNT</option>
-        <option value="AVG">AVG</option>
-        <option value="MIN">MIN</option>
-        <option value="MAX">MAX</option>
-      </select>
-
-      <select id="aggField">
-        <option value="">Select Field</option>
-        {getAllColumns()
-          .filter((col) => {
-            const [tbl, colName] = col.name.includes(".")
-              ? col.name.split(".")
-              : [table, col.name];
-
-            const colSchema = schema?.tables[tbl]?.columns[colName];
-            return colSchema?.aggregatable;
-          })
-          .map((col) => (
-            <option key={col.name} value={col.name}>
-              {col.label}
-            </option>
-          ))}
-      </select>
-
-      <button
-        onClick={() => {
-          const func = (document.getElementById("aggFunc") as HTMLSelectElement)
-            .value;
-          const field = (
-            document.getElementById("aggField") as HTMLSelectElement
-          ).value;
-          if (!func || !field) return;
-
-          setAggregations((prev) => [...prev, { func, field }]);
-        }}
-      >
-        Add Aggregation
-      </button>
-
-      {/* Show Selected Aggregations */}
-      {aggregations.map((agg, index) => {
-        const alias = `${agg.func.toLowerCase()}_${agg.field}`;
-        return (
-          <div key={index}>
-            {agg.func}({agg.field}) AS {alias}
-            <button
-              onClick={() =>
-                setAggregations((prev) => prev.filter((_, i) => i !== index))
-              }
-            >
-              Remove
-            </button>
+      {/* SELECT COLUMNS */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Select Columns</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {getAllColumns().map((col) => {
+              const active = selectedColumns.includes(col.name);
+              return (
+                <div
+                  key={col.name}
+                  className={`
+                    flex items-center space-x-2 rounded-lg border p-3
+                    cursor-pointer transition-all
+                    hover:shadow-sm hover:border-primary/40
+                    ${active ? "bg-primary/5 border-primary/40" : "bg-background"}
+                  `}
+                  onClick={() => toggleColumn(col.name)}
+                >
+                  <Checkbox
+                    checked={active}
+                    onCheckedChange={() => toggleColumn(col.name)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <label className="text-sm truncate cursor-pointer">
+                    {col.label}
+                  </label>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        </CardContent>
+      </Card>
 
       {/* GROUP BY */}
-      <h3>Group By</h3>
-      {getAllColumns().map((col) => (
-        <label key={col.name} style={{ marginRight: 12 }}>
-          <input
-            type="checkbox"
-            checked={groupBy.includes(col.name)}
-            onChange={() => toggleGroupBy(col.name)}
-          />
-          {col.label}
-        </label>
-      ))}
+      <Card>
+        <CardHeader>
+          <CardTitle>Group By</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {getAllColumns().map((col) => {
+              const active = groupBy.includes(col.name);
+              return (
+                <div
+                  key={col.name}
+                  className={`
+                    flex items-center space-x-2 rounded-lg border p-3
+                    cursor-pointer transition-all
+                    hover:shadow-sm hover:border-primary/40
+                    ${active
+                      ? "bg-primary/5 border-primary/40"
+                      : "bg-background"
+                    }
+                  `}
+                  onClick={() => toggleGroupBy(col.name)}
+                >
+                  <Checkbox
+                    checked={active}
+                    onCheckedChange={() => toggleGroupBy(col.name)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <label className="text-sm truncate cursor-pointer">
+                    {col.label}
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* WHERE FILTERS */}
-      <h3>Filters</h3>
-      <QueryBuilder fields={fields} query={query} onQueryChange={setQuery} />
+      {/* AGGREGATIONS */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Aggregations</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-4">
+            <select
+              id="aggFunc"
+              className="border rounded px-3 py-2 cursor-pointer hover:border-primary/40 transition"
+            >
+              <option value="">Function</option>
+              <option value="SUM">SUM</option>
+              <option value="COUNT">COUNT</option>
+              <option value="AVG">AVG</option>
+              <option value="MIN">MIN</option>
+              <option value="MAX">MAX</option>
+            </select>
+
+            <select
+              id="aggField"
+              className="border rounded px-3 py-2 cursor-pointer hover:border-primary/40 transition"
+            >
+              <option value="">Field</option>
+              {getAllColumns().map((col) => (
+                <option key={col.name} value={col.name}>
+                  {col.label}
+                </option>
+              ))}
+            </select>
+
+            <Button
+              onClick={() => {
+                const func = (
+                  document.getElementById("aggFunc") as HTMLSelectElement
+                ).value;
+                const field = (
+                  document.getElementById("aggField") as HTMLSelectElement
+                ).value;
+                if (!func || !field) return;
+                setAggregations((prev) => [...prev, { func, field }]);
+              }}
+            >
+              Add
+            </Button>
+          </div>
+
+          {aggregations.map((agg, index) => {
+            const alias = `${agg.func.toLowerCase()}_${agg.field}`;
+            return (
+              <div
+                key={index}
+                className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
+              >
+                <span>
+                  {agg.func}({agg.field}) AS {alias}
+                </span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() =>
+                    setAggregations((prev) =>
+                      prev.filter((_, i) => i !== index),
+                    )
+                  }
+                >
+                  Remove
+                </Button>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      {/* FILTERS */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Filters</CardTitle>
+        </CardHeader>
+
+        <CardContent>
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <QueryBuilder
+              fields={fields}
+              query={query}
+              onQueryChange={setQuery}
+              controlClassnames={{
+                queryBuilder: "space-y-4",
+                ruleGroup:
+                  "border-l-4 border-primary/40 pl-4 space-y-4 bg-muted/20 rounded-lg p-4",
+                combinators: "border rounded-md px-2 py-1 cursor-pointer",
+                addRule:
+                  "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
+                addGroup:
+                  "bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md px-3 py-1 cursor-pointer transition",
+                removeRule: "text-destructive hover:underline cursor-pointer",
+                removeGroup: "text-destructive hover:underline cursor-pointer",
+                fields:
+                  "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+                operators:
+                  "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+                value: "border rounded-md px-2 py-1",
+              }}
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       {/* HAVING */}
-      {aggregationAliases.length > 0 && (
-        <>
-          <h3>Having</h3>
-          <QueryBuilder
-            fields={havingFields}
-            query={having}
-            onQueryChange={setHaving}
-          />
-        </>
+      {aggregations.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Having</CardTitle>
+          </CardHeader>
+
+          <CardContent>
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <QueryBuilder
+                fields={havingFields}
+                query={having}
+                onQueryChange={setHaving}
+                controlClassnames={{
+                  queryBuilder: "space-y-4",
+                  ruleGroup:
+                    "border-l-4 border-primary/40 pl-4 space-y-4 bg-muted/20 rounded-lg p-4",
+                  combinators: "border rounded-md px-2 py-1 cursor-pointer",
+                  addRule:
+                    "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
+                  addGroup:
+                    "bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md px-3 py-1 cursor-pointer transition",
+                  removeRule: "text-destructive hover:underline cursor-pointer",
+                  removeGroup:
+                    "text-destructive hover:underline cursor-pointer",
+                  fields:
+                    "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+                  operators:
+                    "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+                  value: "border rounded-md px-2 py-1",
+                }}
+              />
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* ORDER BY */}
-      <h3>Order By</h3>
-      <select
-        onChange={(e) => {
-          if (!e.target.value) return;
-          addOrder(e.target.value);
-        }}
-      >
-        <option value="">Select Field</option>
+      <Card>
+        <CardHeader>
+          <CardTitle>Order By</CardTitle>
+        </CardHeader>
 
-        {selectedColumns.map((f) => (
-          <option key={f} value={f}>
-            {f}
-          </option>
-        ))}
+        <CardContent className="space-y-4">
+          <div className="flex gap-4">
+            <Select
+              onValueChange={(value) => {
+                if (!value) return;
 
-        {aggregationAliases.map((alias) => (
-          <option key={alias} value={alias}>
-            {alias}
-          </option>
-        ))}
-      </select>
+                setOrderBy((prev) => {
+                  if (prev.some((o) => o.field === value)) return prev;
+                  return [...prev, { field: value, direction: "ASC" }];
+                });
 
-      {orderBy.map((o, idx) => (
-        <div key={idx}>
-          {o.field}
-          <select
-            value={o.direction}
-            onChange={(e) => {
-              const updated = [...orderBy];
-              updated[idx].direction = e.target.value;
-              setOrderBy(updated);
-            }}
-          >
-            <option value="ASC">ASC</option>
-            <option value="DESC">DESC</option>
-          </select>
-        </div>
-      ))}
+                if (value.includes(".")) {
+                  const [joinTable] = value.split(".");
+                  setJoins((prev) => {
+                    if (prev.some((j) => j.table === joinTable)) return prev;
+                    return [...prev, { table: joinTable }];
+                  });
+                }
+              }}
+            >
+              <SelectTrigger className="w-55 cursor-pointer hover:border-primary/40 transition">
+                <SelectValue placeholder="Select field" />
+              </SelectTrigger>
 
-      <br />
-      <button onClick={runQuery}>Run Query</button>
+              <SelectContent>
+                {orderFields.map((col) => (
+                  <SelectItem key={col.name} value={col.name}>
+                    {col.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {orderBy.map((o, index) => (
+            <div
+              key={index}
+              className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
+            >
+              <span>{o.field}</span>
+
+              <div className="flex gap-2">
+                <Select
+                  value={o.direction}
+                  onValueChange={(dir) => {
+                    setOrderBy((prev) =>
+                      prev.map((item, i) =>
+                        i === index ? { ...item, direction: dir } : item,
+                      ),
+                    );
+                  }}
+                >
+                  <SelectTrigger className="w-25 cursor-pointer hover:border-primary/40 transition">
+                    <SelectValue />
+                  </SelectTrigger>
+
+                  <SelectContent>
+                    <SelectItem value="ASC">ASC</SelectItem>
+                    <SelectItem value="DESC">DESC</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() =>
+                    setOrderBy((prev) => prev.filter((_, i) => i !== index))
+                  }
+                >
+                  Remove
+                </Button>
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* RUN QUERY */}
+      <div>
+        <Button
+          size="lg"
+          onClick={runQuery}
+          className="cursor-pointer hover:scale-105 active:scale-95 transition"
+        >
+          Run Query
+        </Button>
+      </div>
 
       {/* RESULTS */}
       {results.length > 0 && (
-        <table border={1} cellPadding={6} style={{ marginTop: 30 }}>
-          <thead>
-            <tr>
-              {Object.keys(results[0]).map((k) => (
-                <th key={k}>{k}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((row, i) => (
-              <tr key={i}>
-                {Object.values(row).map((v, j) => (
-                  <td key={j}>{String(v)}</td>
+        <Card>
+          <CardHeader>
+            <CardTitle>Results</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {Object.keys(results[0]).map((k) => (
+                    <TableHead key={k} className="cursor-default">
+                      {k}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {results.map((row, i) => (
+                  <TableRow key={i} className="hover:bg-muted/40 transition">
+                    {Object.values(row).map((v, j) => (
+                      <TableCell key={j}>{String(v)}</TableCell>
+                    ))}
+                  </TableRow>
                 ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
