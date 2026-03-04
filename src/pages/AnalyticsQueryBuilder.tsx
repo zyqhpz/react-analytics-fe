@@ -81,6 +81,9 @@ export default function App() {
     const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
     const [results, setResults] = useState<any[]>([]);
 
+    const [savedQueries, setSavedQueries] = useState<any[]>([]);
+    const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null);
+
     const [queryName, setQueryName] = useState("");
     const [queryDescription, setQueryDescription] = useState("");
 
@@ -155,6 +158,46 @@ export default function App() {
             ),
         );
     }, [joins]);
+
+    // FETCH SAVED QUERIES
+    useEffect(() => {
+        const fetchQueries = async () => {
+            const res = await fetch("http://localhost:8080/api/v1/query", {
+                headers: getAuthHeaders(),
+            });
+
+            const data = await res.json();
+            setSavedQueries(data.data || []);
+        };
+
+        fetchQueries();
+    }, []);
+
+    // LOAD QUERY INTO BUILDER
+    const loadQuery = (query: any) => {
+        const config = JSON.parse(query.visual_config);
+
+        setTable(config.table || "");
+        setJoins(config.joins || []);
+        setSelectedColumns(config.select || []);
+        setAggregations(config.aggregations || []);
+        setGroupBy(config.group_by || []);
+        setOrderBy(config.order_by || []);
+        setQuery(config.where || { combinator: "and", rules: [] });
+        setHaving(config.having || { combinator: "and", rules: [] });
+        setQueryName(query.name || "");
+        setQueryDescription(query.description || "");
+
+        setResults([]);
+        setTestSuccess(false);
+    };
+
+    // DESELECT QUERY
+    const deselectQuery = () => {
+        setSelectedQueryId(null);
+        setQueryName("");
+        setQueryDescription("");
+    };
 
     const tableSchema = schema?.tables[table];
 
@@ -261,7 +304,6 @@ export default function App() {
             where: query,
             having,
             order_by: orderBy,
-            limit: 100,
         };
 
         console.log("Payload:", payload);
@@ -319,7 +361,6 @@ export default function App() {
             where: query,
             having,
             order_by: orderBy,
-            limit: 100,
         };
 
         const payload = {
@@ -329,16 +370,20 @@ export default function App() {
             config,
         };
 
-        const res = await fetch("http://localhost:8080/api/v1/query", {
-            method: "POST",
+        const url = selectedQueryId
+            ? `http://localhost:8080/api/v1/query/${selectedQueryId}`
+            : "http://localhost:8080/api/v1/query";
+
+        const method = selectedQueryId ? "PUT" : "POST";
+
+        const res = await fetch(url, {
+            method: method,
             headers: getAuthHeaders(),
             body: JSON.stringify(payload),
         });
 
         if (res.ok) {
             toast.success("Query saved successfully.");
-            setQueryName("");
-            setQueryDescription("");
         } else {
             const data = await res.json();
             toast.error("Failed to save query.", {
@@ -382,6 +427,49 @@ export default function App() {
                 <IoArrowBack /> Back to Dashboard
             </Button>
             <h1 className="text-3xl font-bold">Advanced Report Builder</h1>
+
+            {/* SAVED QUERY SELECT */}
+            <Card>
+                <CardHeader>
+                    <CardTitle>Load Saved Query</CardTitle>
+                </CardHeader>
+
+                <CardContent className="flex gap-3">
+
+                    <Select
+                        value={selectedQueryId || ""}
+                        onValueChange={(value) => {
+                            setSelectedQueryId(value);
+                            const selected = savedQueries.find((q) => q.id === value);
+                            if (selected) loadQuery(selected);
+                        }}
+                    >
+                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition w-80">
+                            <SelectValue placeholder="Select saved query" />
+                        </SelectTrigger>
+
+                        <SelectContent>
+                            {savedQueries.map((q) => (
+                                <SelectItem key={q.id} value={q.id}>
+                                    {q.name}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+
+                    {selectedQueryId && (
+                        <Button
+                            variant="outline"
+                            onClick={deselectQuery}
+                            className="cursor-pointer"
+                        >
+                            Deselect
+                        </Button>
+                    )}
+
+                </CardContent>
+            </Card>
+
 
             {/* TABLE SELECT */}
             <Card>
@@ -795,7 +883,7 @@ export default function App() {
                         disabled={!testSuccess}
                         className="cursor-pointer hover:scale-105 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Save Query
+                        {selectedQueryId ? "Update Query" : "Save Query"}
                     </Button>
                 </CardContent>
             </Card>
