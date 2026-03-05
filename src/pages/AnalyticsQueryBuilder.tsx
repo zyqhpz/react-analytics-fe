@@ -1,4 +1,5 @@
 import { getAuthHeaders } from "@/api/client";
+import { fetchSavedQueries } from "@/api/queries";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -161,16 +162,14 @@ export default function App() {
 
     // FETCH SAVED QUERIES
     useEffect(() => {
-        const fetchQueries = async () => {
-            const res = await fetch("http://localhost:8080/api/v1/query", {
-                headers: getAuthHeaders(),
-            });
-
-            const data = await res.json();
-            setSavedQueries(data.data || []);
-        };
-
-        fetchQueries();
+        (async () => {
+            try {
+                const queries = await fetchSavedQueries();
+                setSavedQueries(queries);
+            } catch (err) {
+                console.error("Failed to fetch saved queries:", err);
+            }
+        })();
     }, []);
 
     // LOAD QUERY INTO BUILDER
@@ -435,7 +434,6 @@ export default function App() {
                 </CardHeader>
 
                 <CardContent className="flex gap-3">
-
                     <Select
                         value={selectedQueryId || ""}
                         onValueChange={(value) => {
@@ -466,10 +464,8 @@ export default function App() {
                             Deselect
                         </Button>
                     )}
-
                 </CardContent>
             </Card>
-
 
             {/* TABLE SELECT */}
             <Card>
