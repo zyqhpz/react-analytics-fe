@@ -1,16 +1,9 @@
+import type { FullSchema, Query } from "@/types/query";
 import type { ResponseApiBase } from "./base";
 import { getAuthHeaders } from "./client";
 
-export interface Query {
-    id: string;
-    data?: QueryRow[];
-    name: string;
-    description: string;
-    result_schema: string[];
-}
-
 export type QueryApiResponse = ResponseApiBase<Query | Query[]>;
-export type QueryRow = Record<string, never>;
+export type GetSchemasResponse = ResponseApiBase<FullSchema>;
 
 export const fetchSavedQueries = async () => {
     const res = await fetch("http://localhost:8080/api/v1/query", {

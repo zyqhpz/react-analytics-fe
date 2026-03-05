@@ -6,13 +6,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { v7 as uuidv7 } from "uuid";
 
-import type { Query, QueryRow } from "@/api/queries";
+import { fetchDashboard } from "@/api/dashboard";
 import { fetchQueryWithData, fetchSavedQueries } from "@/api/queries";
+import { type DashboardWidget, type WidgetPosition } from "@/types/dashboard";
+import { type ChartType, type Query, type QueryRow } from "@/types/query";
 import { toast } from "sonner";
-
-type ChartType = "line" | "bar" | "pie";
-
-type WidgetPosition = { x: number; y: number; w: number; h: number };
 
 type BackendWidget = {
     id: string;
@@ -27,6 +25,11 @@ type ChartsMeta = {
     observer?: ResizeObserver;
 };
 
+type WidgetMeta = {
+    queryId: string;
+    chartType: ChartType;
+};
+
 const DASHBOARD_ID = "019c7377-64b0-75c7-93e3-8f2152715aa5";
 
 /**
@@ -38,7 +41,7 @@ const DASHBOARD_ID = "019c7377-64b0-75c7-93e3-8f2152715aa5";
  *   { type: "FPX", sum_amount: 86790 }
  * ]
  */
-function buildOption(
+export function buildOption(
     type: ChartType,
     data: QueryRow[] = [],
     schema?: string[],
@@ -65,12 +68,14 @@ function buildOption(
         const sample = data[0];
         const keys = Object.keys(sample);
 
-        for (const k of keys) {
-            if (typeof sample[k] === "number") {
-                valueKey = k;
-            } else {
-                categoryKey = k;
-            }
+        // prefer schema if provided
+        if (schema && schema.length >= 2) {
+            categoryKey = schema[0];
+            valueKey = schema[1];
+        } else {
+            // fallback: first key = category, second = value
+            categoryKey = keys[0];
+            valueKey = keys[1];
         }
     }
 
@@ -104,7 +109,8 @@ function buildOption(
         series: [
             {
                 type,
-                data: data.map((row) => row[valueKey]),
+                // data: data.map((row) => row[valueKey]),
+                data: data.map((row) => Number(row[valueKey])),
                 smooth: type === "line",
             } as any,
         ],
@@ -117,6 +123,9 @@ export default function PopulationDashboard() {
 
     // chart instances by widget id
     const chartsRef = useRef<Record<string, ChartsMeta>>({});
+    const widgetsMetaRef = useRef<Record<string, WidgetMeta>>({});
+
+    const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
 
     const [dashboardName, setDashboardName] = useState("My Dashboard");
     const [dashboardDescription, setDashboardDescription] = useState("");
@@ -259,6 +268,11 @@ export default function PopulationDashboard() {
         const id = uuidv7();
         const type = selectedChartType;
 
+        widgetsMetaRef.current[id] = {
+            queryId: selectedQueryId,
+            chartType: type,
+        };
+
         const selectedQuery = queries.find((q) => q.id === selectedQueryId);
 
         if (!selectedQuery) return;
@@ -274,16 +288,41 @@ export default function PopulationDashboard() {
             title: selectedQuery?.name || `${type.toUpperCase()} CHART`,
         });
 
+        setWidgets((prev) => [
+            ...prev,
+            {
+                id,
+                queryId: selectedQueryId,
+                chartType: selectedChartType,
+                title: selectedQuery.name,
+                position: { x: 0, y: bottomY, w: 6, h: 3 },
+            },
+        ])
+
         // initialize empty chart first
-        requestAnimationFrame(() => {
+        const waitForDom = () => {
+            const el = document.getElementById(id);
+
+            if (!el) {
+                requestAnimationFrame(waitForDom);
+                return;
+            }
+
             initChart(id, type, []);
+
+            chartsRef.current[id]?.instance.showLoading({
+                text: "Running query..."
+            });
             resizeAllCharts();
 
             const meta = chartsRef.current[id];
+
             meta?.instance?.showLoading({
                 text: "Running query...",
             });
-        });
+        };
+
+        requestAnimationFrame(waitForDom);
 
         try {
             const result = await fetchQueryWithData(selectedQueryId);
@@ -291,13 +330,20 @@ export default function PopulationDashboard() {
             const rows = result.data ?? [];
             const schema = result.result_schema ?? [];
 
-            const meta = chartsRef.current[id];
+            const applyData = () => {
+                const meta = chartsRef.current[id];
 
-            if (!meta) return;
+                if (!meta) {
+                    requestAnimationFrame(applyData);
+                    return;
+                }
 
-            meta.instance.hideLoading();
+                meta.instance.hideLoading();
+                meta.instance.resize();
+                meta.instance.setOption(buildOption(type, rows, schema));
+            };
 
-            meta.instance.setOption(buildOption(type, rows, schema));
+            applyData();
         } catch (err) {
             toast.error("Query failed: " + (err as Error).message);
 
@@ -331,33 +377,42 @@ export default function PopulationDashboard() {
             setSaving(true);
 
             const layout = grid.save(false, false) as GridStackWidget[];
+            const widgets = layout.map((item) => {
+                const meta = widgetsMetaRef.current[item.id!];
 
-            const widgets = layout.map((item) => ({
-                id: item.id,
-                type: chartsRef.current[item.id!]?.type,
-                position: {
-                    x: item.x!,
-                    y: item.y!,
-                    w: item.w!,
-                    h: item.h!,
-                },
-            }));
+                return {
+                    id: item.id,
+                    type: meta?.chartType,
+                    query_id: meta?.queryId,
+                    position: {
+                        x: item.x!,
+                        y: item.y!,
+                        w: item.w!,
+                        h: item.h!,
+                    },
+                };
+            });
 
             const payload = {
                 dashboard_id: DASHBOARD_ID,
                 widgets,
             };
 
-            await fetch("http://localhost:8080/api/v1/widgets", {
+            const res = await fetch("http://localhost:8080/api/v1/widgets", {
                 method: "POST",
                 headers: getAuthHeaders(),
                 body: JSON.stringify(payload),
             });
 
-            alert("✅ Dashboard saved successfully!");
+            if (!res.ok) {
+                throw new Error("Failed to save dashboard");
+            }
+
+            toast.success("✅ Dashboard saved successfully!");
         } catch (err) {
             console.error("❌ Failed to save dashboard:", err);
-            alert("Failed to save dashboard");
+
+            toast.error("❌ Failed to save dashboard");
         } finally {
             setSaving(false);
         }
@@ -368,54 +423,70 @@ export default function PopulationDashboard() {
      */
     const loadDashboardFromAPI = useCallback(async () => {
         const grid = gridRef.current;
-        const container = gridContainerRef.current;
 
-        if (!grid || !container) return;
+        if (!grid) return;
 
-        const response = await fetch(
-            `http://localhost:8080/api/v1/dashboards/${DASHBOARD_ID}?include_data=true`,
-            {
-                headers: getAuthHeaders(),
-            },
-        );
+        try {
+            const result = await fetchDashboard(DASHBOARD_ID);
 
-        const result = await response.json();
+            if (!result?.data) {
+                throw new Error("Dashboard response missing data");
+            }
 
-        if (response.status !== 200) {
-            console.error("Failed to load dashboard:", result);
+            setDashboardName(result.data?.name || "My Dashboard");
+            setDashboardDescription(result.data?.description || "");
+
+            const list: BackendWidget[] = result?.data?.widgets ?? [];
+            if (!list.length) return;
+
+            Object.keys(chartsRef.current).forEach(destroyChart);
+
+            grid.removeAll(true);
+            setWidgets([]);
+
+            const loadedWidgets: DashboardWidget[] = [];
+
+            for (const w of list) {
+                const id = w.id;
+                const type = w.widget_type;
+                const data = w.query?.data ?? [];
+                const schema = w.query?.result_schema;
+
+                widgetsMetaRef.current[id] = {
+                    queryId: w.query?.id ?? "",
+                    chartType: type,
+                };
+
+                addWidget({
+                    id,
+                    x: w.position.x,
+                    y: w.position.y,
+                    w: w.position.w,
+                    h: w.position.h,
+                    title: w.query?.name || `${type.toUpperCase()} CHART`,
+                });
+
+                requestAnimationFrame(() => initChart(id, type, data, schema));
+
+                loadedWidgets.push({
+                    id,
+                    queryId: w.query?.id ?? "",
+                    chartType: type,
+                    title: w.query?.name || "",
+                    position: w.position,
+                    data,
+                    schema,
+                });
+            }
+
+            setWidgets(loadedWidgets);
+
+            requestAnimationFrame(() => resizeAllCharts());
+        } catch (err) {
+            console.error("Failed to load dashboard:", err);
+            toast.error("Failed to load dashboard: " + (err as Error).message);
             return;
         }
-
-        setDashboardName(result.data?.name || "My Dashboard");
-        setDashboardDescription(result.data?.description || "");
-
-        const list: BackendWidget[] = result?.data?.widgets ?? [];
-        if (!list.length) return;
-
-        Object.keys(chartsRef.current).forEach(destroyChart);
-
-        grid.removeAll();
-        container.innerHTML = "";
-
-        for (const w of list) {
-            const id = w.id;
-            const type = w.widget_type;
-            const data = w.query?.data ?? [];
-            const schema = w.query?.result_schema;
-
-            addWidget({
-                id,
-                x: w.position.x,
-                y: w.position.y,
-                w: w.position.w,
-                h: w.position.h,
-                title: w.query?.name || `${type.toUpperCase()} CHART`,
-            });
-
-            requestAnimationFrame(() => initChart(id, type, data, schema));
-        }
-
-        requestAnimationFrame(() => resizeAllCharts());
     }, [addWidget, destroyChart, initChart, resizeAllCharts]);
 
     useEffect(() => {
@@ -442,7 +513,14 @@ export default function PopulationDashboard() {
             if (target.classList.contains("delete-widget")) {
                 const widgetEl = target.closest(".grid-stack-item") as HTMLElement;
 
-                if (widgetEl) deleteWidget(widgetEl);
+                if (widgetEl) {
+                    const widgetId = widgetEl.querySelector("[id]")?.getAttribute("id");
+                    deleteWidget(widgetEl);
+                    if (widgetId) {
+                        delete widgetsMetaRef.current[widgetId];
+                        setWidgets((prev) => prev.filter((w) => w.id !== widgetId));
+                    }
+                }
             }
         };
 

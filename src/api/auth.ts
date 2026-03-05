@@ -1,3 +1,5 @@
+import { setWithExpiry } from "./utils";
+
 export interface LoginResponse {
     token: string;
 }
@@ -22,8 +24,7 @@ export async function login(email: string, password: string): Promise<string> {
 
     const token = data.token;
 
-    // store token
-    localStorage.setItem("token", token);
+    setWithExpiry("token", token, 60 * 60 * 1000);
 
     return token;
 }

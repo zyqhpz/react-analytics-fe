@@ -18,6 +18,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import { type Query } from "@/types/query";
 import { useEffect, useMemo, useState } from "react";
 import { FaCheckCircle } from "react-icons/fa";
 import { IoArrowBack } from "react-icons/io5";
@@ -25,44 +26,9 @@ import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
-type Aggregation = {
-    func: string;
-    field: string;
-};
+import type { GetSchemasResponse } from "@/api/queries";
+import type { Aggregation, FullSchema, Join, OrderBy } from "@/types/query";
 
-type OrderBy = {
-    field: string;
-    direction: string;
-};
-
-type Join = {
-    table: string;
-};
-
-type ColumnSchema = {
-    type: string;
-    selectable?: boolean;
-    filterable?: boolean;
-    groupable?: boolean;
-    aggregatable?: boolean;
-    values?: string[];
-};
-
-type TableSchema = {
-    columns: Record<string, ColumnSchema>;
-    relations?: Record<string, any>;
-};
-
-type FullSchema = {
-    tables: Record<string, TableSchema>;
-};
-
-type GetSchemasResponse = {
-    responseCode: number;
-    description: string;
-    data: FullSchema;
-    token: string;
-};
 
 export default function App() {
     const [schema, setSchema] = useState<FullSchema | null>(null);
@@ -82,7 +48,7 @@ export default function App() {
     const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
     const [results, setResults] = useState<any[]>([]);
 
-    const [savedQueries, setSavedQueries] = useState<any[]>([]);
+    const [savedQueries, setSavedQueries] = useState<Query[]>([]);
     const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null);
 
     const [queryName, setQueryName] = useState("");
@@ -144,6 +110,7 @@ export default function App() {
                     data: data.data,
                     token: data.token,
                 };
+
                 setSchema(typedData.data);
                 const firstTable = Object.keys(typedData.data.tables)[0];
                 setTable(firstTable);
@@ -173,8 +140,12 @@ export default function App() {
     }, []);
 
     // LOAD QUERY INTO BUILDER
-    const loadQuery = (query: any) => {
-        const config = JSON.parse(query.visual_config);
+    const loadQuery = (query: Query) => {
+        // const config = JSON.parse(query.visual_config);
+        const config =
+            typeof query.visual_config === "string"
+                ? JSON.parse(query.visual_config)
+                : query.visual_config;
 
         setTable(config.table || "");
         setJoins(config.joins || []);

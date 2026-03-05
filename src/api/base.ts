@@ -1,6 +1,6 @@
 export interface ResponseApiBase<T> {
     data: T;
-    response_code: number;
+    responseCode: number;
     description: string;
     token: string;
 }
