@@ -170,8 +170,8 @@ export default function PopulationDashboard() {
 
     const getBottomY = useCallback(() => {
         const grid = gridRef.current;
-        if (!grid || !grid.engine?.nodes?.length) return 0;
-        return Math.max(...grid.engine.nodes.map((n) => (n.y ?? 0) + (n.h ?? 0)));
+        if (!grid) return 0;
+        return grid.getRow();
     }, []);
 
     const ensureWidgetDom = useCallback((id: string, title: string) => {
@@ -179,7 +179,7 @@ export default function PopulationDashboard() {
 
         wrapper.innerHTML = `
       <div class="grid-stack-item">
-        <div class="grid-stack-item-content bg-white/10 backdrop-blur-lg rounded-2xl shadow-xl border border-white/10 flex flex-col h-full">
+        <div class="grid-stack-item-content bg-white/10 backdrop-blur-lg rounded-2xl shadow-xl border border-white/10 flex flex-col">
           <div class="px-4 py-3 border-b border-white/10 font-semibold text-slate-200 flex justify-between items-center">
             <span>${title}</span>
             <button class="delete-widget text-red-400 hover:text-red-300 text-sm" type="button">✕</button>
@@ -233,14 +233,18 @@ export default function PopulationDashboard() {
             if (!grid || !container) return;
 
             const el = ensureWidgetDom(opts.id, opts.title);
+            el.setAttribute("gs-x", String(Number(opts.x)));
+            el.setAttribute("gs-y", String(Number(opts.y)));
+            el.setAttribute("gs-w", String(Number(opts.w)));
+            el.setAttribute("gs-h", String(Number(opts.h)));
+            el.setAttribute("gs-id", opts.id);
 
             container.appendChild(el);
-
             grid.makeWidget(el, {
-                x: opts.x,
-                y: opts.y,
-                w: opts.w,
-                h: opts.h,
+                x: Number(opts.x),
+                y: Number(opts.y),
+                w: Number(opts.w),
+                h: Number(opts.h),
                 id: opts.id,
             } as GridStackWidget);
 
@@ -297,7 +301,7 @@ export default function PopulationDashboard() {
                 title: selectedQuery.name,
                 position: { x: 0, y: bottomY, w: 6, h: 3 },
             },
-        ])
+        ]);
 
         // initialize empty chart first
         const waitForDom = () => {
@@ -311,7 +315,7 @@ export default function PopulationDashboard() {
             initChart(id, type, []);
 
             chartsRef.current[id]?.instance.showLoading({
-                text: "Running query..."
+                text: "Running query...",
             });
             resizeAllCharts();
 
@@ -451,7 +455,7 @@ export default function PopulationDashboard() {
 
             // 3. Reinitialize a fresh grid
             const grid = GridStack.init(
-                { column: 12, cellHeight: 120, margin: 15, float: true },
+                { column: 12, cellHeight: 120, margin: 15, float: false },
                 container,
             );
             gridRef.current = grid;
@@ -466,7 +470,9 @@ export default function PopulationDashboard() {
                 return;
             }
 
-            gridContainerRef.current?.querySelectorAll(".grid-stack-item").forEach(el => el.remove());
+            gridContainerRef.current
+                ?.querySelectorAll(".grid-stack-item")
+                .forEach((el) => el.remove());
             setWidgets([]);
 
             const loadedWidgets: DashboardWidget[] = [];
@@ -510,7 +516,7 @@ export default function PopulationDashboard() {
             setWidgets(loadedWidgets);
 
             requestAnimationFrame(() => {
-                pendingCharts.forEach(fn => fn());
+                pendingCharts.forEach((fn) => fn());
                 resizeAllCharts();
             });
         } catch (err) {
@@ -525,7 +531,6 @@ export default function PopulationDashboard() {
         loadDashboardFromAPIRef.current = loadDashboardFromAPI;
     }, [loadDashboardFromAPI]);
 
-
     useEffect(() => {
         const container = gridContainerRef.current;
         if (!container) return;
@@ -535,7 +540,7 @@ export default function PopulationDashboard() {
                 column: 12,
                 cellHeight: 120,
                 margin: 15,
-                float: true,
+                float: false,
             },
             container,
         );
