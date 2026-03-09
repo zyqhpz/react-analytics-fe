@@ -29,7 +29,6 @@ import { toast } from "sonner";
 import type { GetSchemasResponse } from "@/api/queries";
 import type { Aggregation, FullSchema, Join, OrderBy } from "@/types/query";
 
-
 export default function App() {
     const [schema, setSchema] = useState<FullSchema | null>(null);
     const [table, setTable] = useState("");
@@ -45,6 +44,7 @@ export default function App() {
     const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
     const [aggregations, setAggregations] = useState<Aggregation[]>([]);
     const [groupBy, setGroupBy] = useState<string[]>([]);
+    const [groupByDateField, setGroupByDateField] = useState("");
     const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
     const [results, setResults] = useState<any[]>([]);
 
@@ -58,29 +58,45 @@ export default function App() {
 
     const navigate = useNavigate();
 
-    const getAllColumns = () => {
+    const isRawQualifiedColumn = (value: string) =>
+        /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(value);
+
+    const getJoinTableFromField = (value: string): string | null => {
+        if (!isRawQualifiedColumn(value)) return null;
+        return value.split(".")[0];
+    };
+
+    const isDateLikeColumn = (type: string | undefined, name: string) => {
+        const normalizedType = (type || "").toLowerCase();
+        if (normalizedType.includes("date") || normalizedType.includes("time")) {
+            return true;
+        }
+
+        return /(_at|date|time)$/i.test(name);
+    };
+
+    const getAllColumnsWithMeta = () => {
         if (!schema || !tableSchema) return [];
 
         const seen = new Set<string>();
-        const columns: { name: string; label: string }[] = [];
+        const columns: { name: string; label: string; type?: string }[] = [];
 
-        // Base table columns
-        Object.entries(tableSchema.columns).forEach(([name]) => {
+        Object.entries(tableSchema.columns).forEach(([name, columnSchema]) => {
             if (!seen.has(name)) {
                 seen.add(name);
                 columns.push({
                     name,
                     label: name,
+                    type: columnSchema.type,
                 });
             }
         });
 
-        // Joined table columns
         joins.forEach((join) => {
             const joinSchema = schema.tables[join.table];
             if (!joinSchema) return;
 
-            Object.entries(joinSchema.columns).forEach(([name]) => {
+            Object.entries(joinSchema.columns).forEach(([name, columnSchema]) => {
                 const qualified = `${join.table}.${name}`;
 
                 if (!seen.has(qualified)) {
@@ -88,12 +104,17 @@ export default function App() {
                     columns.push({
                         name: qualified,
                         label: qualified,
+                        type: columnSchema.type,
                     });
                 }
             });
         });
 
         return columns;
+    };
+
+    const getAllColumns = () => {
+        return getAllColumnsWithMeta().map(({ name, label }) => ({ name, label }));
     };
 
     // 🔥 Fetch schema from backend
@@ -152,6 +173,7 @@ export default function App() {
         setSelectedColumns(config.select || []);
         setAggregations(config.aggregations || []);
         setGroupBy(config.group_by || []);
+        setGroupByDateField("");
         setOrderBy(config.order_by || []);
         setQuery(config.where || { combinator: "and", rules: [] });
         setHaving(config.having || { combinator: "and", rules: [] });
@@ -167,6 +189,7 @@ export default function App() {
         setSelectedQueryId(null);
         setQueryName("");
         setQueryDescription("");
+        setGroupByDateField("");
     };
 
     const tableSchema = schema?.tables[table];
@@ -182,9 +205,8 @@ export default function App() {
                 : [...prev, column];
 
             // 🔥 Auto-add join if selecting joined field
-            if (column.includes(".")) {
-                const [joinTable] = column.split(".");
-
+            const joinTable = getJoinTableFromField(column);
+            if (joinTable) {
                 setJoins((prevJoins) => {
                     if (prevJoins.some((j) => j.table === joinTable)) return prevJoins;
                     return [...prevJoins, { table: joinTable }];
@@ -201,9 +223,8 @@ export default function App() {
                 ? prev.filter((c) => c !== column)
                 : [...prev, column];
 
-            if (column.includes(".")) {
-                const [joinTable] = column.split(".");
-
+            const joinTable = getJoinTableFromField(column);
+            if (joinTable) {
                 setJoins((prevJoins) => {
                     if (prevJoins.some((j) => j.table === joinTable)) return prevJoins;
                     return [...prevJoins, { table: joinTable }];
@@ -229,24 +250,24 @@ export default function App() {
     useEffect(() => {
         setSelectedColumns((prev) =>
             prev.filter((col) => {
-                if (!col.includes(".")) return true;
-                const [tbl] = col.split(".");
+                const tbl = getJoinTableFromField(col);
+                if (!tbl) return true;
                 return joins.some((j) => j.table === tbl);
             }),
         );
 
         setGroupBy((prev) =>
             prev.filter((col) => {
-                if (!col.includes(".")) return true;
-                const [tbl] = col.split(".");
+                const tbl = getJoinTableFromField(col);
+                if (!tbl) return true;
                 return joins.some((j) => j.table === tbl);
             }),
         );
 
         setOrderBy((prev) =>
             prev.filter((o) => {
-                if (!o.field.includes(".")) return true;
-                const [tbl] = o.field.split(".");
+                const tbl = getJoinTableFromField(o.field);
+                if (!tbl) return true;
                 return joins.some((j) => j.table === tbl);
             }),
         );
@@ -254,6 +275,10 @@ export default function App() {
 
     const aggregationAliases = aggregations.map(
         (agg) => `${agg.func.toLowerCase()}_${agg.field}`,
+    );
+
+    const effectiveSelectColumns = Array.from(
+        new Set([...selectedColumns, ...groupBy]),
     );
 
     const havingFields = aggregationAliases.map((alias) => ({
@@ -265,7 +290,7 @@ export default function App() {
         const payload = {
             table,
             joins,
-            select: selectedColumns,
+            select: effectiveSelectColumns,
             aggregations,
             group_by: groupBy,
             where: query,
@@ -322,7 +347,7 @@ export default function App() {
         const config = {
             table,
             joins,
-            select: selectedColumns,
+            select: effectiveSelectColumns,
             aggregations,
             group_by: groupBy,
             where: query,
@@ -370,11 +395,23 @@ export default function App() {
 
     const orderFields = [
         ...getAllColumns(),
+        ...groupBy
+            .filter(
+                (groupField) => !getAllColumns().some((c) => c.name === groupField),
+            )
+            .map((groupField) => ({
+                name: groupField,
+                label: groupField,
+            })),
         ...aggregationAliases.map((alias) => ({
             name: alias,
             label: alias,
         })),
     ];
+
+    const dateColumns = getAllColumnsWithMeta().filter((col) =>
+        isDateLikeColumn(col.type, col.name),
+    );
 
     if (!schema || !tableSchema) {
         return (
@@ -449,6 +486,7 @@ export default function App() {
                             setSelectedColumns([]);
                             setAggregations([]);
                             setGroupBy([]);
+                            setGroupByDateField("");
                             setOrderBy([]);
                             setQuery({ combinator: "and", rules: [] });
                             setHaving({ combinator: "and", rules: [] });
@@ -542,7 +580,7 @@ export default function App() {
                     <CardTitle>Group By</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                         {getAllColumns().map((col) => {
                             const active = groupBy.includes(col.name);
                             return (
@@ -571,6 +609,71 @@ export default function App() {
                             );
                         })}
                     </div>
+
+                    <div className="flex flex-wrap items-center gap-3 mb-4">
+                        <Select
+                            value={groupByDateField}
+                            onValueChange={setGroupByDateField}
+                        >
+                            <SelectTrigger className="w-72 cursor-pointer hover:border-primary/40 transition">
+                                <SelectValue placeholder="Datetime field for DATE(...)" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {dateColumns.map((col) => (
+                                    <SelectItem key={col.name} value={col.name}>
+                                        {col.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+
+                        <Button
+                            variant="secondary"
+                            onClick={() => {
+                                if (!groupByDateField) return;
+
+                                const expression = `DATE(${groupByDateField})`;
+                                setGroupBy((prev) =>
+                                    prev.includes(expression) ? prev : [...prev, expression],
+                                );
+
+                                const joinTable = getJoinTableFromField(groupByDateField);
+                                if (joinTable) {
+                                    setJoins((prevJoins) => {
+                                        if (prevJoins.some((j) => j.table === joinTable)) {
+                                            return prevJoins;
+                                        }
+                                        return [...prevJoins, { table: joinTable }];
+                                    });
+                                }
+                            }}
+                            disabled={!groupByDateField || dateColumns.length === 0}
+                        >
+                            Add Date Group
+                        </Button>
+                    </div>
+
+                    {groupBy.length > 0 && (
+                        <div className="space-y-2">
+                            {groupBy.map((item, index) => (
+                                <div
+                                    key={`${item}-${index}`}
+                                    className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
+                                >
+                                    <span>{item}</span>
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={() =>
+                                            setGroupBy((prev) => prev.filter((_, i) => i !== index))
+                                        }
+                                    >
+                                        Remove
+                                    </Button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </CardContent>
             </Card>
 

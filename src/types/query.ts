@@ -1,6 +1,7 @@
-export type QueryRow = Record<string, never>;
+export type QueryValue = string | number | boolean | null | undefined;
+export type QueryRow = Record<string, QueryValue>;
 
-export type ChartType = "line" | "bar" | "pie";
+export type ChartType = string;
 
 export interface Query {
     id: string;

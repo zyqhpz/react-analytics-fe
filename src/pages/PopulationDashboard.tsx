@@ -31,6 +31,15 @@ type WidgetMeta = {
     chartType: ChartType;
 };
 
+type ChartTypeGuide = {
+    description: string;
+    minimumFields: number;
+    required: string[];
+    optional?: string[];
+    sampleRow: Record<string, string | number>;
+    notes?: string[];
+};
+
 const DASHBOARD_ID = "019c7377-64b0-75c7-93e3-8f2152715aa5";
 
 const formatCompactNumber = (value: unknown): string => {
@@ -41,6 +50,211 @@ const formatCompactNumber = (value: unknown): string => {
         notation: "compact",
         maximumFractionDigits: 2,
     }).format(numericValue);
+};
+
+const toNumeric = (value: unknown): number | null => {
+    if (value === null || value === undefined) return null;
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? numericValue : null;
+};
+
+const toLabel = (value: unknown): string => {
+    if (value === null || value === undefined || value === "") return "N/A";
+    return String(value);
+};
+
+const inferDataShape = (data: QueryRow[], schema?: string[]) => {
+    const sample = data[0] ?? {};
+    const keys = schema?.length ? schema : Object.keys(sample);
+    const numericKeys = keys.filter((key) =>
+        data.every((row) => toNumeric(row[key]) !== null),
+    );
+    const categoryKey =
+        keys.find((key) => !numericKeys.includes(key)) ?? keys[0] ?? "category";
+    const valueKeys = numericKeys.length ? numericKeys : keys.slice(1, 2);
+    const primaryValueKey = valueKeys[0] ?? keys[1] ?? keys[0];
+
+    return { keys, numericKeys, valueKeys, categoryKey, primaryValueKey };
+};
+
+const fallbackCartesianOption = (
+    chartType: string,
+    categoryData: string[],
+    seriesData: number[],
+): echarts.EChartsOption => ({
+    title: {
+        text: `${chartType} needs specialized schema`,
+        subtext: "Showing fallback bar chart",
+        left: "center",
+        top: 4,
+        textStyle: { color: "#e2e8f0", fontSize: 13, fontWeight: 600 },
+        subtextStyle: { color: "#94a3b8", fontSize: 11 },
+    },
+    backgroundColor: "transparent",
+    grid: { left: 28, right: 20, top: 54, bottom: 40, containLabel: true },
+    xAxis: {
+        type: "category",
+        data: categoryData,
+        axisLabel: { color: "#cbd5e1", fontSize: 11 },
+        axisLine: { lineStyle: { color: "rgba(148, 163, 184, 0.45)" } },
+    },
+    yAxis: {
+        type: "value",
+        axisLabel: {
+            color: "#cbd5e1",
+            fontSize: 11,
+            formatter: (value: number) => formatCompactNumber(value),
+        },
+        splitLine: { lineStyle: { color: "rgba(148, 163, 184, 0.18)" } },
+    },
+    tooltip: {
+        trigger: "axis",
+        backgroundColor: "rgba(15, 23, 42, 0.92)",
+        borderColor: "rgba(148, 163, 184, 0.3)",
+        textStyle: { color: "#e2e8f0" },
+    },
+    series: [
+        {
+            type: "bar",
+            data: seriesData,
+            itemStyle: { color: "#60a5fa" },
+        },
+    ],
+});
+
+const CHART_TYPE_GUIDES: Record<string, ChartTypeGuide> = {
+    line: {
+        description: "Trend over categories or time.",
+        minimumFields: 2,
+        required: ["1 category field (string/date)", "1+ numeric field"],
+        optional: ["Additional numeric fields for multiple lines"],
+        sampleRow: { month: "2026-01", total_amount: 12045.5 },
+        notes: ["Schema order should be category first, then metrics."],
+    },
+    bar: {
+        description: "Compare values across categories.",
+        minimumFields: 2,
+        required: ["1 category field", "1+ numeric field"],
+        optional: ["Additional numeric fields for grouped bars"],
+        sampleRow: { provider_type: "FPX", total_amount: 87000.23 },
+    },
+    scatter: {
+        description: "Relationship/distribution of numeric values.",
+        minimumFields: 2,
+        required: ["1 category/label field", "1 numeric field"],
+        optional: ["Additional numeric fields as extra series"],
+        sampleRow: { merchant: "Store A", revenue: 12345.67 },
+    },
+    effectScatter: {
+        description: "Scatter with emphasis animation.",
+        minimumFields: 2,
+        required: ["1 category/label field", "1 numeric field"],
+        sampleRow: { region: "North", count: 98 },
+    },
+    pictorialBar: {
+        description: "Bar chart using symbols/icons.",
+        minimumFields: 2,
+        required: ["1 category field", "1 numeric field"],
+        sampleRow: { product: "Plan A", users: 4200 },
+    },
+    pie: {
+        description: "Part-to-whole distribution.",
+        minimumFields: 2,
+        required: ["1 category/segment field", "1 numeric value field"],
+        sampleRow: { payment_type: "EWallet", total_amount: 4014.24 },
+    },
+    funnel: {
+        description: "Sequential stage drop-off.",
+        minimumFields: 2,
+        required: ["1 stage/category field", "1 numeric value field"],
+        sampleRow: { stage: "Checkout", users: 8400 },
+    },
+    gauge: {
+        description: "Single KPI progress meter.",
+        minimumFields: 1,
+        required: ["1 numeric value field"],
+        optional: ["1 label field (optional)"],
+        sampleRow: { completion_rate: 72.5 },
+        notes: ["Only first numeric value is used."],
+    },
+    radar: {
+        description: "Compare multiple dimensions for one profile.",
+        minimumFields: 2,
+        required: ["1 dimension/category field", "1 numeric value field"],
+        optional: ["Additional numeric fields"],
+        sampleRow: { metric: "Speed", score: 86 },
+    },
+    heatmap: {
+        description: "Intensity map by category cell.",
+        minimumFields: 2,
+        required: ["1 category field", "1 numeric value field"],
+        sampleRow: { day: "Mon", transactions: 1200 },
+    },
+    tree: {
+        description: "Hierarchical view (auto-built from flat rows).",
+        minimumFields: 2,
+        required: ["1 category field", "1 numeric value field"],
+        sampleRow: { segment: "Enterprise", amount: 53200 },
+    },
+    treemap: {
+        description: "Nested area sizing by value.",
+        minimumFields: 2,
+        required: ["1 category field", "1 numeric value field"],
+        sampleRow: { team: "A", cost: 23000 },
+    },
+    sunburst: {
+        description: "Radial hierarchical view.",
+        minimumFields: 2,
+        required: ["1 category field", "1 numeric value field"],
+        sampleRow: { channel: "Online", value: 34200 },
+    },
+    candlestick: {
+        description: "OHLC financial-style chart.",
+        minimumFields: 5,
+        required: [
+            "1 category/timestamp field",
+            "4 numeric fields: open, close, low, high",
+        ],
+        sampleRow: {
+            date: "2026-02-19",
+            open: 100,
+            close: 108,
+            low: 95,
+            high: 112,
+        },
+        notes: ["Numeric field order matters for correct OHLC rendering."],
+    },
+    boxplot: {
+        description: "Distribution summary with quartiles.",
+        minimumFields: 6,
+        required: [
+            "1 category field",
+            "5 numeric fields: min, q1, median, q3, max",
+        ],
+        sampleRow: {
+            segment: "A",
+            min: 10,
+            q1: 22,
+            median: 35,
+            q3: 47,
+            max: 61,
+        },
+        notes: ["Numeric field order matters for boxplot rendering."],
+    },
+};
+
+const getChartTypeGuide = (type: string): ChartTypeGuide => {
+    return (
+        CHART_TYPE_GUIDES[type] ?? {
+            description: "Generic support with automatic fallback rendering.",
+            minimumFields: 2,
+            required: ["1 category field", "1 numeric field"],
+            sampleRow: { category: "A", value: 120 },
+            notes: [
+                "If this chart needs special schema, dashboard falls back to bar visualization.",
+            ],
+        }
+    );
 };
 
 /**
@@ -68,30 +282,21 @@ export function buildOption(
         };
     }
 
-    let categoryKey = "";
-    let valueKey = "";
+    const { keys, valueKeys, categoryKey, primaryValueKey } = inferDataShape(
+        data,
+        schema,
+    );
+    const categoryData = data.map((row) => toLabel(row[categoryKey]));
+    const baseSeriesData = data.map(
+        (row) => toNumeric(row[primaryValueKey]) ?? 0,
+    );
+    const nameValuePairs = data.map((row, index) => ({
+        name: toLabel(row[categoryKey] ?? `Item ${index + 1}`),
+        value: toNumeric(row[primaryValueKey]) ?? 0,
+    }));
+    const selectedType = String(type);
 
-    if (schema && schema.length >= 2) {
-        // use backend schema
-        categoryKey = schema[0];
-        valueKey = schema[1];
-    } else {
-        // fallback detection
-        const sample = data[0];
-        const keys = Object.keys(sample);
-
-        // prefer schema if provided
-        if (schema && schema.length >= 2) {
-            categoryKey = schema[0];
-            valueKey = schema[1];
-        } else {
-            // fallback: first key = category, second = value
-            categoryKey = keys[0];
-            valueKey = keys[1];
-        }
-    }
-
-    if (type === "pie") {
+    if (selectedType === "pie" || selectedType === "funnel") {
         return {
             backgroundColor: "transparent",
             tooltip: {
@@ -110,9 +315,9 @@ export function buildOption(
             },
             series: [
                 {
-                    type: "pie",
-                    radius: ["42%", "72%"],
-                    center: ["50%", "46%"],
+                    type: selectedType as any,
+                    radius: selectedType === "pie" ? ["42%", "72%"] : undefined,
+                    center: selectedType === "pie" ? ["50%", "46%"] : undefined,
                     minAngle: 3,
                     itemStyle: {
                         borderColor: "rgba(15, 23, 42, 0.7)",
@@ -133,13 +338,227 @@ export function buildOption(
                         },
                     },
                     data: data.map((row) => ({
-                        name: row[categoryKey],
-                        value: Number(row[valueKey]),
+                        name: toLabel(row[categoryKey]),
+                        value: toNumeric(row[primaryValueKey]) ?? 0,
                     })),
                 },
             ],
         };
     }
+
+    if (selectedType === "gauge") {
+        return {
+            backgroundColor: "transparent",
+            tooltip: {
+                trigger: "item",
+                backgroundColor: "rgba(15, 23, 42, 0.92)",
+                borderColor: "rgba(148, 163, 184, 0.3)",
+                textStyle: { color: "#e2e8f0" },
+            },
+            series: [
+                {
+                    type: "gauge",
+                    progress: { show: true, width: 14 },
+                    axisLine: { lineStyle: { width: 14 } },
+                    detail: {
+                        valueAnimation: true,
+                        color: "#f8fafc",
+                        formatter: (value: number) => formatCompactNumber(value),
+                    },
+                    data: [{ value: baseSeriesData[0] ?? 0 }],
+                },
+            ],
+        };
+    }
+
+    if (selectedType === "radar") {
+        const maxValue = Math.max(...baseSeriesData, 1);
+        return {
+            backgroundColor: "transparent",
+            tooltip: { trigger: "item" },
+            radar: {
+                indicator: nameValuePairs.map((entry) => ({
+                    name: entry.name,
+                    max: Math.ceil(maxValue * 1.2),
+                })),
+                axisName: { color: "#cbd5e1" },
+            },
+            series: [
+                {
+                    type: "radar",
+                    data: [{ value: nameValuePairs.map((entry) => entry.value) }],
+                    areaStyle: { color: "rgba(96, 165, 250, 0.25)" },
+                    lineStyle: { color: "#60a5fa" },
+                },
+            ],
+        };
+    }
+
+    if (selectedType === "sunburst") {
+        return {
+            backgroundColor: "transparent",
+            tooltip: { trigger: "item" },
+            series: [
+                {
+                    type: "sunburst",
+                    radius: ["20%", "85%"],
+                    data: nameValuePairs,
+                    label: { color: "#e2e8f0" },
+                },
+            ],
+        };
+    }
+
+    if (selectedType === "treemap") {
+        return {
+            backgroundColor: "transparent",
+            tooltip: { trigger: "item" },
+            series: [
+                {
+                    type: "treemap",
+                    data: nameValuePairs,
+                    label: { color: "#e2e8f0" },
+                },
+            ],
+        };
+    }
+
+    if (selectedType === "tree") {
+        return {
+            backgroundColor: "transparent",
+            tooltip: { trigger: "item" },
+            series: [
+                {
+                    type: "tree",
+                    data: [
+                        {
+                            name: keys[0] ? toLabel(keys[0]) : "Data",
+                            children: nameValuePairs.map((entry) => ({
+                                name: `${entry.name}: ${formatCompactNumber(entry.value)}`,
+                            })),
+                        },
+                    ],
+                    top: "8%",
+                    left: "8%",
+                    bottom: "10%",
+                    right: "20%",
+                    symbolSize: 8,
+                    label: { color: "#e2e8f0" },
+                    lineStyle: { color: "rgba(148, 163, 184, 0.5)" },
+                },
+            ],
+        };
+    }
+
+    if (selectedType === "heatmap") {
+        return {
+            backgroundColor: "transparent",
+            tooltip: { position: "top" },
+            xAxis: {
+                type: "category",
+                data: categoryData,
+                axisLabel: { color: "#cbd5e1" },
+            },
+            yAxis: {
+                type: "category",
+                data: [primaryValueKey],
+                axisLabel: { color: "#cbd5e1" },
+            },
+            visualMap: {
+                min: Math.min(...baseSeriesData),
+                max: Math.max(...baseSeriesData, 1),
+                calculable: true,
+                orient: "horizontal",
+                left: "center",
+                bottom: 0,
+                textStyle: { color: "#cbd5e1" },
+            },
+            series: [
+                {
+                    type: "heatmap",
+                    data: baseSeriesData.map((value, index) => [index, 0, value]),
+                    label: { show: false },
+                },
+            ],
+        };
+    }
+
+    if (selectedType === "candlestick" && valueKeys.length >= 4) {
+        return {
+            backgroundColor: "transparent",
+            tooltip: { trigger: "axis" },
+            xAxis: {
+                type: "category",
+                data: categoryData,
+                axisLabel: { color: "#cbd5e1" },
+            },
+            yAxis: { scale: true, axisLabel: { color: "#cbd5e1" } },
+            series: [
+                {
+                    type: "candlestick",
+                    data: data.map((row) =>
+                        valueKeys.slice(0, 4).map((key) => toNumeric(row[key]) ?? 0),
+                    ),
+                },
+            ],
+        };
+    }
+
+    if (selectedType === "boxplot" && valueKeys.length >= 5) {
+        return {
+            backgroundColor: "transparent",
+            tooltip: { trigger: "item" },
+            xAxis: {
+                type: "category",
+                data: categoryData,
+                axisLabel: { color: "#cbd5e1" },
+            },
+            yAxis: { type: "value", axisLabel: { color: "#cbd5e1" } },
+            series: [
+                {
+                    type: "boxplot",
+                    data: data.map((row) =>
+                        valueKeys.slice(0, 5).map((key) => toNumeric(row[key]) ?? 0),
+                    ),
+                },
+            ],
+        };
+    }
+
+    const isMultiCartesianType =
+        selectedType === "line" ||
+        selectedType === "bar" ||
+        selectedType === "scatter" ||
+        selectedType === "effectScatter" ||
+        selectedType === "pictorialBar";
+    const fallbackSeries =
+        (fallbackCartesianOption(selectedType, categoryData, baseSeriesData)
+            .series as any[]) ?? [];
+    const cartesianSeries = isMultiCartesianType
+        ? valueKeys.map((key, index) => ({
+            type: selectedType as any,
+            name: key,
+            data: data.map((row) => toNumeric(row[key]) ?? 0),
+            smooth: selectedType === "line",
+            itemStyle: { color: index % 2 === 0 ? "#60a5fa" : "#22d3ee" },
+            lineStyle: { width: 3, color: index % 2 === 0 ? "#60a5fa" : "#22d3ee" },
+            areaStyle:
+                selectedType === "line"
+                    ? {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            {
+                                offset: 0,
+                                color:
+                                    index % 2 === 0
+                                        ? "rgba(96, 165, 250, 0.45)"
+                                        : "rgba(34, 211, 238, 0.45)",
+                            },
+                            { offset: 1, color: "rgba(96, 165, 250, 0.03)" },
+                        ]),
+                    }
+                    : undefined,
+        }))
+        : fallbackSeries;
 
     return {
         backgroundColor: "transparent",
@@ -160,7 +579,7 @@ export function buildOption(
         },
         xAxis: {
             type: "category",
-            data: data.map((row) => row[categoryKey]),
+            data: categoryData,
             axisLabel: {
                 color: "#cbd5e1",
                 fontSize: 11,
@@ -179,24 +598,19 @@ export function buildOption(
             },
             splitLine: { lineStyle: { color: "rgba(148, 163, 184, 0.18)" } },
         },
-        series: [
-            {
-                type,
-                data: data.map((row) => Number(row[valueKey])),
-                smooth: type === "line",
-                itemStyle: { color: "#60a5fa" },
-                lineStyle: { width: 3, color: "#60a5fa" },
-                areaStyle:
-                    type === "line"
-                        ? {
-                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                                { offset: 0, color: "rgba(96, 165, 250, 0.45)" },
-                                { offset: 1, color: "rgba(96, 165, 250, 0.03)" },
-                            ]),
-                        }
-                        : undefined,
-            } as any,
-        ],
+        series: [...cartesianSeries],
+        ...(isMultiCartesianType
+            ? {}
+            : {
+                title: {
+                    text: `${selectedType} needs specialized schema`,
+                    subtext: "Showing fallback bar series",
+                    left: "center",
+                    top: 4,
+                    textStyle: { color: "#e2e8f0", fontSize: 13, fontWeight: 600 },
+                    subtextStyle: { color: "#94a3b8", fontSize: 11 },
+                },
+            }),
     };
 }
 
@@ -240,6 +654,10 @@ export default function PopulationDashboard() {
                 label: toLabel(value),
             }));
     }, []);
+    const selectedChartGuide = useMemo(
+        () => getChartTypeGuide(String(selectedChartType)),
+        [selectedChartType],
+    );
 
     const resizeAllCharts = useCallback(() => {
         const charts = chartsRef.current;
@@ -745,7 +1163,7 @@ export default function PopulationDashboard() {
 
             {showModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
-                    <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-slate-900/85 p-6 shadow-2xl">
+                    <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/85 p-6 shadow-2xl">
                         <h2 className="mb-5 text-xl font-semibold text-slate-100">
                             Add New Chart
                         </h2>
@@ -795,6 +1213,63 @@ export default function PopulationDashboard() {
                             <p className="mt-2 text-xs text-slate-400">
                                 Showing all ECharts chart types.
                             </p>
+                        </div>
+
+                        <div className="mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4">
+                            <div className="mb-2 flex items-center justify-between gap-3">
+                                <p className="text-sm font-semibold text-slate-100">
+                                    Data Requirements
+                                </p>
+                                <span className="rounded-md border border-cyan-300/30 bg-cyan-500/10 px-2 py-1 text-xs text-cyan-100">
+                                    {String(selectedChartType)}
+                                </span>
+                            </div>
+
+                            <p className="text-xs text-slate-300">
+                                {selectedChartGuide.description}
+                            </p>
+
+                            <p className="mt-3 text-xs text-slate-300">
+                                Minimum fields:{" "}
+                                <span className="font-semibold text-slate-100">
+                                    {selectedChartGuide.minimumFields}
+                                </span>
+                            </p>
+
+                            <div className="mt-3 text-xs text-slate-300">
+                                <p className="font-medium text-slate-200">Required</p>
+                                <ul className="mt-1 list-disc pl-5">
+                                    {selectedChartGuide.required.map((item) => (
+                                        <li key={item}>{item}</li>
+                                    ))}
+                                </ul>
+                            </div>
+
+                            {selectedChartGuide.optional?.length ? (
+                                <div className="mt-3 text-xs text-slate-300">
+                                    <p className="font-medium text-slate-200">Optional</p>
+                                    <ul className="mt-1 list-disc pl-5">
+                                        {selectedChartGuide.optional.map((item) => (
+                                            <li key={item}>{item}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            ) : null}
+
+                            <div className="mt-3">
+                                <p className="text-xs font-medium text-slate-200">Sample row</p>
+                                <pre className="mt-1 overflow-x-auto rounded-lg border border-white/10 bg-slate-900/70 p-2 text-[11px] leading-relaxed text-slate-300">
+                                    {JSON.stringify(selectedChartGuide.sampleRow, null, 2)}
+                                </pre>
+                            </div>
+
+                            {selectedChartGuide.notes?.length ? (
+                                <div className="mt-3 text-xs text-amber-200/90">
+                                    {selectedChartGuide.notes.map((note) => (
+                                        <p key={note}>Note: {note}</p>
+                                    ))}
+                                </div>
+                            ) : null}
                         </div>
 
                         <div className="flex justify-end gap-3">
