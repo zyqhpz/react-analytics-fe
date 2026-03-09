@@ -252,9 +252,6 @@ export default function App() {
         );
     }, [joins]);
 
-    const addOrder = (field: string) => {
-        setOrderBy([...orderBy, { field, direction: "ASC" }]);
-    };
     const aggregationAliases = aggregations.map(
         (agg) => `${agg.func.toLowerCase()}_${agg.field}`,
     );

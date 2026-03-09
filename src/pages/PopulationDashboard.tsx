@@ -32,6 +32,16 @@ type WidgetMeta = {
 
 const DASHBOARD_ID = "019c7377-64b0-75c7-93e3-8f2152715aa5";
 
+const formatCompactNumber = (value: unknown): string => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return String(value ?? "");
+
+    return new Intl.NumberFormat("en-US", {
+        notation: "compact",
+        maximumFractionDigits: 2,
+    }).format(numericValue);
+};
+
 /**
  * Build ECharts option dynamically based on query.data
  * This supports generic SQL results like:
@@ -51,7 +61,8 @@ export function buildOption(
             title: {
                 text: "No Data",
                 left: "center",
-                textStyle: { color: "#cbd5e1" },
+                top: "middle",
+                textStyle: { color: "#cbd5e1", fontSize: 20, fontWeight: 700 },
             },
         };
     }
@@ -81,14 +92,48 @@ export function buildOption(
 
     if (type === "pie") {
         return {
-            tooltip: { trigger: "item" },
+            backgroundColor: "transparent",
+            tooltip: {
+                trigger: "item",
+                backgroundColor: "rgba(15, 23, 42, 0.92)",
+                borderColor: "rgba(148, 163, 184, 0.3)",
+                textStyle: { color: "#e2e8f0" },
+                valueFormatter: (value) => formatCompactNumber(value),
+            },
+            legend: {
+                bottom: 4,
+                textStyle: { color: "#cbd5e1", fontSize: 12 },
+                itemWidth: 10,
+                itemHeight: 10,
+                type: "scroll",
+            },
             series: [
                 {
                     type: "pie",
-                    radius: "65%",
+                    radius: ["42%", "72%"],
+                    center: ["50%", "46%"],
+                    minAngle: 3,
+                    itemStyle: {
+                        borderColor: "rgba(15, 23, 42, 0.7)",
+                        borderWidth: 2,
+                    },
+                    labelLine: {
+                        length: 12,
+                        length2: 8,
+                        lineStyle: { color: "rgba(203, 213, 225, 0.55)" },
+                    },
+                    label: {
+                        color: "#e2e8f0",
+                        fontSize: 12,
+                        formatter: "{name|{b}} {percent|{d}%}",
+                        rich: {
+                            name: { color: "#cbd5e1", fontWeight: 500 },
+                            percent: { color: "#f8fafc", fontWeight: 700 },
+                        },
+                    },
                     data: data.map((row) => ({
                         name: row[categoryKey],
-                        value: row[valueKey],
+                        value: Number(row[valueKey]),
                     })),
                 },
             ],
@@ -96,22 +141,59 @@ export function buildOption(
     }
 
     return {
-        tooltip: { trigger: "axis" },
+        backgroundColor: "transparent",
+        grid: {
+            left: 28,
+            right: 20,
+            top: 28,
+            bottom: 40,
+            containLabel: true,
+        },
+        tooltip: {
+            trigger: "axis",
+            backgroundColor: "rgba(15, 23, 42, 0.92)",
+            borderColor: "rgba(148, 163, 184, 0.3)",
+            textStyle: { color: "#e2e8f0" },
+            axisPointer: { type: "shadow" },
+            valueFormatter: (value) => formatCompactNumber(value),
+        },
         xAxis: {
             type: "category",
             data: data.map((row) => row[categoryKey]),
-            axisLabel: { color: "#cbd5e1" },
+            axisLabel: {
+                color: "#cbd5e1",
+                fontSize: 11,
+                formatter: (value: string) =>
+                    value?.length > 14 ? `${value.slice(0, 14)}...` : value,
+            },
+            axisLine: { lineStyle: { color: "rgba(148, 163, 184, 0.45)" } },
+            axisTick: { show: false },
         },
         yAxis: {
             type: "value",
-            axisLabel: { color: "#cbd5e1" },
+            axisLabel: {
+                color: "#cbd5e1",
+                fontSize: 11,
+                formatter: (value: number) => formatCompactNumber(value),
+            },
+            splitLine: { lineStyle: { color: "rgba(148, 163, 184, 0.18)" } },
         },
         series: [
             {
                 type,
-                // data: data.map((row) => row[valueKey]),
                 data: data.map((row) => Number(row[valueKey])),
                 smooth: type === "line",
+                itemStyle: { color: "#60a5fa" },
+                lineStyle: { width: 3, color: "#60a5fa" },
+                areaStyle:
+                    type === "line"
+                        ? {
+                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                { offset: 0, color: "rgba(96, 165, 250, 0.45)" },
+                                { offset: 1, color: "rgba(96, 165, 250, 0.03)" },
+                            ]),
+                        }
+                        : undefined,
             } as any,
         ],
     };
@@ -179,10 +261,10 @@ export default function PopulationDashboard() {
 
         wrapper.innerHTML = `
       <div class="grid-stack-item">
-        <div class="grid-stack-item-content bg-white/10 backdrop-blur-lg rounded-2xl shadow-xl border border-white/10 flex flex-col">
-          <div class="px-4 py-3 border-b border-white/10 font-semibold text-slate-200 flex justify-between items-center">
-            <span>${title}</span>
-            <button class="delete-widget text-red-400 hover:text-red-300 text-sm" type="button">✕</button>
+        <div class="grid-stack-item-content overflow-hidden rounded-2xl border border-white/10 bg-slate-900/45 shadow-[0_20px_45px_rgba(2,6,23,0.45)] backdrop-blur-xl flex flex-col">
+          <div class="px-4 py-3 border-b border-white/10 font-semibold text-slate-100 flex justify-between items-center gap-3">
+            <span class="truncate">${title}</span>
+            <button class="delete-widget h-8 w-8 rounded-md border border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200 transition text-sm" type="button">X</button>
           </div>
           <div id="${id}" class="flex-1 min-h-50"></div>
         </div>
@@ -412,11 +494,11 @@ export default function PopulationDashboard() {
                 throw new Error("Failed to save dashboard");
             }
 
-            toast.success("✅ Dashboard saved successfully!");
+            toast.success("Dashboard saved successfully.");
         } catch (err) {
-            console.error("❌ Failed to save dashboard:", err);
+            console.error("Failed to save dashboard:", err);
 
-            toast.error("❌ Failed to save dashboard");
+            toast.error("Failed to save dashboard.");
         } finally {
             setSaving(false);
         }
@@ -588,50 +670,72 @@ export default function PopulationDashboard() {
     }, [deleteWidget, destroyChart, resizeAllCharts]);
 
     return (
-        <div className="min-h-screen bg-linear-to-br from-slate-900 via-indigo-900 to-slate-800 text-white p-6">
-            <div className="mb-8">
-                <h1 className="text-3xl font-bold">{dashboardName}</h1>
-                <p className="text-slate-300">{dashboardDescription}</p>
+        <div className="min-h-screen bg-linear-to-br from-slate-950 via-slate-900 to-indigo-950 text-white relative overflow-x-hidden">
+            <div className="pointer-events-none absolute inset-0 opacity-70">
+                <div className="absolute -top-32 -right-24 h-96 w-96 rounded-full bg-indigo-500/18 blur-3xl" />
+                <div className="absolute top-1/3 -left-24 h-80 w-80 rounded-full bg-cyan-500/12 blur-3xl" />
             </div>
 
-            <div className="flex gap-4">
-                <button
-                    onClick={() => setShowModal(true)}
-                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-lg transition"
-                >
-                    ➕ Add Chart
-                </button>
+            <div className="relative z-10 p-6 md:p-8">
+                <div className="mx-auto max-w-360">
+                    <div className="mb-8 rounded-2xl border border-white/10 bg-slate-900/45 px-6 py-5 shadow-[0_20px_50px_rgba(2,6,23,0.45)] backdrop-blur-xl">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                            <div>
+                                <h1 className="text-3xl font-semibold tracking-tight text-slate-100 md:text-4xl">
+                                    {dashboardName}
+                                </h1>
+                                <p className="mt-2 text-sm text-slate-300/90 md:text-base">
+                                    {dashboardDescription || "Analytics workspace"}
+                                </p>
+                            </div>
+                            <div className="rounded-lg border border-white/10 bg-slate-800/60 px-3 py-2 text-xs text-slate-300">
+                                Widgets: {widgets.length}
+                            </div>
+                        </div>
 
-                <button
-                    onClick={saveDashboard}
-                    disabled={saving}
-                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-lg transition disabled:opacity-60"
-                >
-                    {saving ? "Saving..." : "💾 Save Dashboard"}
-                </button>
+                        <div className="mt-6 flex flex-wrap gap-3">
+                            <button
+                                onClick={() => setShowModal(true)}
+                                className="px-5 py-2.5 rounded-xl border border-emerald-400/30 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30 transition shadow-sm"
+                            >
+                                + Add Chart
+                            </button>
 
-                <button
-                    className="px-5 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg shadow-lg transition"
-                    onClick={() => navigate("/query-builder")}
-                >
-                    Create Query
-                </button>
+                            <button
+                                onClick={saveDashboard}
+                                disabled={saving}
+                                className="px-5 py-2.5 rounded-xl border border-indigo-300/30 bg-indigo-500/25 text-indigo-50 hover:bg-indigo-500/35 transition disabled:opacity-60"
+                            >
+                                {saving ? "Saving..." : "Save Dashboard"}
+                            </button>
+
+                            <button
+                                className="px-5 py-2.5 rounded-xl border border-white/15 bg-slate-700/45 text-slate-100 hover:bg-slate-700/65 transition"
+                                onClick={() => navigate("/query-builder")}
+                            >
+                                Open Query Builder
+                            </button>
+                        </div>
+                    </div>
+
+                    <div ref={gridContainerRef} className="grid-stack mt-6 pb-8" />
+                </div>
             </div>
-
-            <div ref={gridContainerRef} className="grid-stack mt-6" />
 
             {showModal && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-                    <div className="bg-slate-800 rounded-2xl w-112.5 p-6 shadow-2xl border border-white/10">
-                        <h2 className="text-xl font-semibold mb-4">Add New Chart</h2>
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+                    <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-slate-900/85 p-6 shadow-2xl">
+                        <h2 className="mb-5 text-xl font-semibold text-slate-100">
+                            Add New Chart
+                        </h2>
 
                         <div className="mb-5">
-                            <p className="text-sm text-slate-400 mb-2">Query</p>
+                            <p className="mb-2 text-sm text-slate-300">Query</p>
 
                             <select
                                 value={selectedQueryId}
                                 onChange={(e) => setSelectedQueryId(e.target.value)}
-                                className="w-full bg-slate-700 border border-white/10 rounded-lg px-3 py-2"
+                                className="w-full rounded-lg border border-white/15 bg-slate-800/90 px-3 py-2.5 text-slate-100 outline-none focus:border-cyan-300/40"
                             >
                                 <option value="">Select Query</option>
 
@@ -643,24 +747,34 @@ export default function PopulationDashboard() {
                             </select>
                         </div>
 
-                        <div className="space-y-2 mb-6">
-                            {(["line", "bar", "pie"] as ChartType[]).map((t) => (
-                                <label key={t} className="flex items-center gap-3">
-                                    <input
-                                        type="radio"
-                                        value={t}
-                                        checked={selectedChartType === t}
-                                        onChange={() => setSelectedChartType(t)}
-                                    />
-                                    {t.toUpperCase()}
-                                </label>
-                            ))}
+                        <div className="mb-6">
+                            <p className="mb-2 text-sm text-slate-300">Chart Type</p>
+                            <div className="grid grid-cols-3 gap-2">
+                                {(["line", "bar", "pie"] as ChartType[]).map((t) => (
+                                    <label
+                                        key={t}
+                                        className={`flex cursor-pointer items-center justify-center gap-2 rounded-lg border px-3 py-2 transition ${selectedChartType === t
+                                            ? "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
+                                            : "border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
+                                            }`}
+                                    >
+                                        <input
+                                            type="radio"
+                                            value={t}
+                                            checked={selectedChartType === t}
+                                            onChange={() => setSelectedChartType(t)}
+                                            className="hidden"
+                                        />
+                                        {t.toUpperCase()}
+                                    </label>
+                                ))}
+                            </div>
                         </div>
 
                         <div className="flex justify-end gap-3">
                             <button
                                 onClick={() => setShowModal(false)}
-                                className="px-4 py-2 bg-slate-600 rounded-lg"
+                                className="rounded-lg border border-white/15 bg-slate-700/70 px-4 py-2 text-slate-100 transition hover:bg-slate-700"
                             >
                                 Cancel
                             </button>
@@ -668,7 +782,7 @@ export default function PopulationDashboard() {
                             <button
                                 disabled={!selectedQueryId}
                                 onClick={confirmAddChart}
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-50"
+                                className="rounded-lg border border-emerald-400/30 bg-emerald-500/25 px-4 py-2 text-emerald-100 transition hover:bg-emerald-500/35 disabled:opacity-50"
                             >
                                 Add Chart
                             </button>
