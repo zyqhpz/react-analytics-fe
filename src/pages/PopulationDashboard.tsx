@@ -170,7 +170,7 @@ export default function PopulationDashboard() {
 
     const getBottomY = useCallback(() => {
         const grid = gridRef.current;
-        if (!grid || !grid.engine.nodes.length) return 0;
+        if (!grid || !grid.engine?.nodes?.length) return 0;
         return Math.max(...grid.engine.nodes.map((n) => (n.y ?? 0) + (n.h ?? 0)));
     }, []);
 
@@ -422,9 +422,8 @@ export default function PopulationDashboard() {
      * Load dashboard configuration + query results from API
      */
     const loadDashboardFromAPI = useCallback(async () => {
-        const grid = gridRef.current;
-
-        if (!grid) return;
+        const container = gridContainerRef.current;
+        if (!container) return;
 
         try {
             const result = await fetchDashboard(DASHBOARD_ID);
@@ -439,12 +438,39 @@ export default function PopulationDashboard() {
             const list: BackendWidget[] = result?.data?.widgets ?? [];
             if (!list.length) return;
 
+            // 1. Destroy all charts first
             Object.keys(chartsRef.current).forEach(destroyChart);
 
-            grid.removeAll(true);
+            // 2. Fully destroy the grid instance and wipe the container DOM
+            if (gridRef.current) {
+                gridRef.current.destroy(false); // keeps DOM nodes
+                gridRef.current = null;
+            }
+            // Manually remove all grid-stack-item children
+            container.innerHTML = "";
+
+            // 3. Reinitialize a fresh grid
+            const grid = GridStack.init(
+                { column: 12, cellHeight: 120, margin: 15, float: true },
+                container,
+            );
+            gridRef.current = grid;
+
+            // Re-attach resize listeners
+            grid.on("resize", () => resizeAllCharts());
+            grid.on("resizestop", () => resizeAllCharts());
+            grid.on("dragstop", () => resizeAllCharts());
+
+            if (!list.length) {
+                setWidgets([]);
+                return;
+            }
+
+            gridContainerRef.current?.querySelectorAll(".grid-stack-item").forEach(el => el.remove());
             setWidgets([]);
 
             const loadedWidgets: DashboardWidget[] = [];
+            const pendingCharts: Array<() => void> = [];
 
             for (const w of list) {
                 const id = w.id;
@@ -466,7 +492,7 @@ export default function PopulationDashboard() {
                     title: w.query?.name || `${type.toUpperCase()} CHART`,
                 });
 
-                requestAnimationFrame(() => initChart(id, type, data, schema));
+                // requestAnimationFrame(() => initChart(id, type, data, schema));
 
                 loadedWidgets.push({
                     id,
@@ -477,17 +503,28 @@ export default function PopulationDashboard() {
                     data,
                     schema,
                 });
+
+                pendingCharts.push(() => initChart(id, type, data, schema));
             }
 
             setWidgets(loadedWidgets);
 
-            requestAnimationFrame(() => resizeAllCharts());
+            requestAnimationFrame(() => {
+                pendingCharts.forEach(fn => fn());
+                resizeAllCharts();
+            });
         } catch (err) {
             console.error("Failed to load dashboard:", err);
             toast.error("Failed to load dashboard: " + (err as Error).message);
             return;
         }
     }, [addWidget, destroyChart, initChart, resizeAllCharts]);
+
+    const loadDashboardFromAPIRef = useRef(loadDashboardFromAPI);
+    useEffect(() => {
+        loadDashboardFromAPIRef.current = loadDashboardFromAPI;
+    }, [loadDashboardFromAPI]);
+
 
     useEffect(() => {
         const container = gridContainerRef.current;
@@ -532,18 +569,18 @@ export default function PopulationDashboard() {
 
         window.addEventListener("resize", resizeAllCharts);
 
-        loadDashboardFromAPI();
+        loadDashboardFromAPIRef.current();
 
         return () => {
             container.removeEventListener("click", onClick);
             window.removeEventListener("resize", resizeAllCharts);
-
             Object.keys(chartsRef.current).forEach(destroyChart);
 
-            grid.destroy(false);
+            // grid may have been reinitialized by loadDashboardFromAPI
+            gridRef.current?.destroy(false);
             gridRef.current = null;
         };
-    }, [deleteWidget, destroyChart, resizeAllCharts, loadDashboardFromAPI]);
+    }, [deleteWidget, destroyChart, resizeAllCharts]);
 
     return (
         <div className="min-h-screen bg-linear-to-br from-slate-900 via-indigo-900 to-slate-800 text-white p-6">
