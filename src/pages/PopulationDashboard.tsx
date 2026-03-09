@@ -1,8 +1,9 @@
 import { getAuthHeaders } from "@/api/client";
 import * as echarts from "echarts";
+import * as echartsCharts from "echarts/charts";
 import { GridStack, type GridStackNode, type GridStackWidget } from "gridstack";
 import "gridstack/dist/gridstack.min.css";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { v7 as uuidv7 } from "uuid";
 
@@ -221,6 +222,24 @@ export default function PopulationDashboard() {
     const [selectedQueryId, setSelectedQueryId] = useState<string>("");
 
     const navigate = useNavigate();
+    const chartTypeOptions = useMemo(() => {
+        const toLabel = (type: string) =>
+            type
+                .replace(/([A-Z])/g, " $1")
+                .replace(/^./, (char) => char.toUpperCase())
+                .trim();
+
+        return Object.keys(echartsCharts)
+            .filter((key) => key.endsWith("Chart"))
+            .map((key) => key.replace(/Chart$/, ""))
+            .map((base) => `${base.charAt(0).toLowerCase()}${base.slice(1)}`)
+            .filter((value, index, array) => array.indexOf(value) === index)
+            .sort((a, b) => a.localeCompare(b))
+            .map((value) => ({
+                value,
+                label: toLabel(value),
+            }));
+    }, []);
 
     const resizeAllCharts = useCallback(() => {
         const charts = chartsRef.current;
@@ -287,7 +306,7 @@ export default function PopulationDashboard() {
 
             const chart = echarts.init(el);
 
-            chart.setOption(buildOption(type, data, schema));
+            chart.setOption(buildOption(type, data, schema), { notMerge: true });
 
             const observer = new ResizeObserver(() => chart.resize());
             observer.observe(el);
@@ -426,7 +445,9 @@ export default function PopulationDashboard() {
 
                 meta.instance.hideLoading();
                 meta.instance.resize();
-                meta.instance.setOption(buildOption(type, rows, schema));
+                meta.instance.setOption(buildOption(type, rows, schema), {
+                    notMerge: true,
+                });
             };
 
             applyData();
@@ -749,26 +770,31 @@ export default function PopulationDashboard() {
 
                         <div className="mb-6">
                             <p className="mb-2 text-sm text-slate-300">Chart Type</p>
-                            <div className="grid grid-cols-3 gap-2">
-                                {(["line", "bar", "pie"] as ChartType[]).map((t) => (
+                            <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto pr-1 md:grid-cols-3">
+                                {chartTypeOptions.map((chartTypeOption) => (
                                     <label
-                                        key={t}
-                                        className={`flex cursor-pointer items-center justify-center gap-2 rounded-lg border px-3 py-2 transition ${selectedChartType === t
-                                            ? "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
-                                            : "border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
+                                        key={chartTypeOption.value}
+                                        className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 transition ${selectedChartType === chartTypeOption.value
+                                                ? "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
+                                                : "cursor-pointer border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
                                             }`}
                                     >
                                         <input
                                             type="radio"
-                                            value={t}
-                                            checked={selectedChartType === t}
-                                            onChange={() => setSelectedChartType(t)}
+                                            value={chartTypeOption.value}
+                                            checked={selectedChartType === chartTypeOption.value}
+                                            onChange={() =>
+                                                setSelectedChartType(chartTypeOption.value as ChartType)
+                                            }
                                             className="hidden"
                                         />
-                                        {t.toUpperCase()}
+                                        {chartTypeOption.label}
                                     </label>
                                 ))}
                             </div>
+                            <p className="mt-2 text-xs text-slate-400">
+                                Showing all ECharts chart types.
+                            </p>
                         </div>
 
                         <div className="flex justify-end gap-3">
