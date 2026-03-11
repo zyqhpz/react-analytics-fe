@@ -48,6 +48,7 @@ export default function App() {
     const [aggregationFunc, setAggregationFunc] = useState("");
     const [aggregationField, setAggregationField] = useState("");
     const [aggregationAliasInput, setAggregationAliasInput] = useState("");
+    const [limit, setLimit] = useState("");
     const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
     const [results, setResults] = useState<any[]>([]);
 
@@ -87,6 +88,9 @@ export default function App() {
 
     const hasSelectValue = (value: string | null | undefined) =>
         typeof value === "string" && value.trim().length > 0;
+
+    const parsedLimit =
+        limit.trim() && Number(limit) > 0 ? Math.floor(Number(limit)) : undefined;
 
     const getAllColumnsWithMeta = () => {
         if (!schema || !tableSchema) return [];
@@ -195,6 +199,7 @@ export default function App() {
         setAggregationFunc("");
         setAggregationField("");
         setAggregationAliasInput("");
+        setLimit(config.limit ? String(config.limit) : "");
         setOrderBy(config.order_by || []);
         setQuery(config.where || { combinator: "and", rules: [] });
         setHaving(config.having || { combinator: "and", rules: [] });
@@ -214,6 +219,7 @@ export default function App() {
         setAggregationFunc("");
         setAggregationField("");
         setAggregationAliasInput("");
+        setLimit("");
     };
 
     const tableSchema = schema?.tables[table];
@@ -318,6 +324,7 @@ export default function App() {
             where: query,
             having,
             order_by: orderBy,
+            ...(parsedLimit ? { limit: parsedLimit } : {}),
         };
 
         console.log("Payload:", payload);
@@ -363,6 +370,7 @@ export default function App() {
         query,
         having,
         orderBy,
+        limit,
     ]);
 
     const saveQuery = async () => {
@@ -375,6 +383,7 @@ export default function App() {
             where: query,
             having,
             order_by: orderBy,
+            ...(parsedLimit ? { limit: parsedLimit } : {}),
         };
 
         const payload = {
@@ -514,6 +523,7 @@ export default function App() {
                             setAggregationFunc("");
                             setAggregationField("");
                             setAggregationAliasInput("");
+                            setLimit("");
                             setOrderBy([]);
                             setQuery({ combinator: "and", rules: [] });
                             setHaving({ combinator: "and", rules: [] });
@@ -972,6 +982,28 @@ export default function App() {
                             </div>
                         </div>
                     ))}
+                </CardContent>
+            </Card>
+
+            {/* LIMIT */}
+            <Card>
+                <CardHeader>
+                    <CardTitle>Limit</CardTitle>
+                </CardHeader>
+
+                <CardContent className="space-y-2">
+                    <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={limit}
+                        onChange={(e) => setLimit(e.target.value)}
+                        placeholder="Optional row limit"
+                        className="w-full max-w-xs border rounded px-3 py-2"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                        Leave empty to fetch without a limit.
+                    </p>
                 </CardContent>
             </Card>
 
