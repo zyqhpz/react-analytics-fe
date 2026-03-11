@@ -4,11 +4,28 @@ import * as echartsCharts from "echarts/charts";
 import { GridStack, type GridStackNode, type GridStackWidget } from "gridstack";
 import "gridstack/dist/gridstack.min.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { useNavigate } from "react-router-dom";
 import { v7 as uuidv7 } from "uuid";
 
 import { fetchDashboard } from "@/api/dashboard";
 import { fetchQueryWithData, fetchSavedQueries } from "@/api/queries";
+import {
+    Pagination,
+    PaginationContent,
+    PaginationItem,
+    PaginationLink,
+    PaginationNext,
+    PaginationPrevious,
+} from "@/components/ui/pagination";
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@/components/ui/table";
 import { type DashboardWidget, type WidgetPosition } from "@/types/dashboard";
 import { type ChartType, type Query, type QueryRow } from "@/types/query";
 import { toast } from "sonner";
@@ -21,9 +38,10 @@ type BackendWidget = {
 };
 
 type ChartsMeta = {
-    instance: echarts.ECharts;
+    instance?: echarts.ECharts;
     type: ChartType;
     observer?: ResizeObserver;
+    root?: Root;
 };
 
 type WidgetMeta = {
@@ -62,6 +80,161 @@ const toLabel = (value: unknown): string => {
     if (value === null || value === undefined || value === "") return "N/A";
     return String(value);
 };
+
+const formatTableValue = (value: unknown): string => {
+    if (value === null || value === undefined || value === "") return "N/A";
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return new Intl.NumberFormat("en-US", {
+            maximumFractionDigits: 2,
+        }).format(value);
+    }
+
+    return String(value);
+};
+
+const getColumns = (data: QueryRow[] = [], schema?: string[]): string[] => {
+    const rawColumns = schema?.length
+        ? schema
+        : data.flatMap((row) => Object.keys(row));
+
+    return Array.from(new Set(rawColumns));
+};
+
+const toCsvValue = (value: unknown): string => {
+    if (value === null || value === undefined) return "";
+    const stringValue = String(value);
+
+    if (/[",\r\n]/.test(stringValue)) {
+        return `"${stringValue.replaceAll('"', '""')}"`;
+    }
+
+    return stringValue;
+};
+
+const buildCsvContent = (data: QueryRow[] = [], schema?: string[]): string => {
+    const columns = getColumns(data, schema);
+    if (!columns.length) return "";
+
+    const header = columns.map(toCsvValue).join(",");
+    const rows = data.map((row) =>
+        columns.map((column) => toCsvValue(row[column])).join(","),
+    );
+
+    return [header, ...rows].join("\r\n");
+};
+
+const TABLE_PAGE_SIZE = 25;
+
+function TableWidgetView({
+    data,
+    schema,
+}: {
+    data: QueryRow[];
+    schema?: string[];
+}) {
+    const columns = useMemo(() => getColumns(data, schema), [data, schema]);
+    const [page, setPage] = useState(1);
+    const shouldPaginate = data.length > TABLE_PAGE_SIZE;
+
+    useEffect(() => {
+        setPage(1);
+    }, [data, schema]);
+
+    const totalPages = shouldPaginate
+        ? Math.max(1, Math.ceil(data.length / TABLE_PAGE_SIZE))
+        : 1;
+    const currentPage = shouldPaginate ? Math.min(page, totalPages) : 1;
+    const startIndex = shouldPaginate ? (currentPage - 1) * TABLE_PAGE_SIZE : 0;
+    const visibleRows = shouldPaginate
+        ? data.slice(startIndex, startIndex + TABLE_PAGE_SIZE)
+        : data;
+
+    if (!data.length) {
+        return (
+            <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-300">
+                No data available.
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex h-full min-h-0 flex-col bg-slate-950/20">
+            <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
+                <Table className="min-w-full text-slate-100">
+                    <TableHeader className="sticky top-0 z-10 bg-slate-900">
+                        <TableRow className="border-white/10 hover:bg-transparent">
+                            {columns.map((column) => (
+                                <TableHead
+                                    key={column}
+                                    className="bg-slate-900 px-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300"
+                                >
+                                    {column}
+                                </TableHead>
+                            ))}
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {visibleRows.map((row, index) => (
+                            <TableRow
+                                key={`${startIndex + index}`}
+                                className="border-white/5 odd:bg-white/[0.02]"
+                            >
+                                {columns.map((column) => (
+                                    <TableCell
+                                        key={`${startIndex + index}-${column}`}
+                                        className="px-3 py-2.5 align-top text-sm text-slate-100"
+                                    >
+                                        {formatTableValue(row[column])}
+                                    </TableCell>
+                                ))}
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </div>
+
+            {shouldPaginate ? (
+                <div className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3 text-xs text-slate-300">
+                    <span>
+                        Showing {startIndex + 1}-
+                        {Math.min(startIndex + visibleRows.length, data.length)} of{" "}
+                        {data.length}
+                    </span>
+
+                    <Pagination className="mx-0 w-auto justify-end">
+                        <PaginationContent>
+                            <PaginationItem>
+                                <PaginationPrevious
+                                    onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                                    disabled={currentPage === 1}
+                                    className="border border-white/10 bg-slate-900/70 text-slate-100 hover:bg-slate-800 disabled:opacity-40"
+                                />
+                            </PaginationItem>
+                            <PaginationItem>
+                                <PaginationLink
+                                    isActive
+                                    disabled
+                                    className="border border-cyan-400/30 bg-cyan-500/10 text-cyan-100"
+                                >
+                                    {currentPage} / {totalPages}
+                                </PaginationLink>
+                            </PaginationItem>
+                            <PaginationItem>
+                                <PaginationNext
+                                    onClick={() =>
+                                        setPage((prev) => Math.min(totalPages, prev + 1))
+                                    }
+                                    disabled={currentPage === totalPages}
+                                    className="border border-white/10 bg-slate-900/70 text-slate-100 hover:bg-slate-800 disabled:opacity-40"
+                                />
+                            </PaginationItem>
+                        </PaginationContent>
+                    </Pagination>
+                </div>
+            ) : null}
+        </div>
+    );
+}
 
 const inferDataShape = (data: QueryRow[], schema?: string[]) => {
     const sample = data[0] ?? {};
@@ -240,6 +413,14 @@ const CHART_TYPE_GUIDES: Record<string, ChartTypeGuide> = {
             max: 61,
         },
         notes: ["Numeric field order matters for boxplot rendering."],
+    },
+    table: {
+        description: "Tabular list view for raw query results.",
+        minimumFields: 1,
+        required: ["1+ fields from any query result"],
+        optional: ["Any number of rows and columns"],
+        sampleRow: { country: "Malaysia", population: 34500000, year: 2025 },
+        notes: ["Useful when users need exact values instead of a chart."],
     },
 };
 
@@ -621,6 +802,7 @@ export default function PopulationDashboard() {
     // chart instances by widget id
     const chartsRef = useRef<Record<string, ChartsMeta>>({});
     const widgetsMetaRef = useRef<Record<string, WidgetMeta>>({});
+    const widgetsRef = useRef<DashboardWidget[]>([]);
 
     const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
 
@@ -643,21 +825,76 @@ export default function PopulationDashboard() {
                 .replace(/^./, (char) => char.toUpperCase())
                 .trim();
 
-        return Object.keys(echartsCharts)
+        const chartTypes = Object.keys(echartsCharts)
             .filter((key) => key.endsWith("Chart"))
             .map((key) => key.replace(/Chart$/, ""))
             .map((base) => `${base.charAt(0).toLowerCase()}${base.slice(1)}`)
+            .filter((value, index, array) => array.indexOf(value) === index)
+            .concat("table")
             .filter((value, index, array) => array.indexOf(value) === index)
             .sort((a, b) => a.localeCompare(b))
             .map((value) => ({
                 value,
                 label: toLabel(value),
             }));
+
+        return chartTypes;
     }, []);
     const selectedChartGuide = useMemo(
         () => getChartTypeGuide(String(selectedChartType)),
         [selectedChartType],
     );
+
+    useEffect(() => {
+        widgetsRef.current = widgets;
+    }, [widgets]);
+
+    const updateWidgetData = useCallback(
+        (id: string, data: QueryRow[], schema?: string[]) => {
+            setWidgets((prev) =>
+                prev.map((widget) =>
+                    widget.id === id
+                        ? {
+                            ...widget,
+                            data,
+                            schema,
+                        }
+                        : widget,
+                ),
+            );
+        },
+        [],
+    );
+
+    const exportWidgetCsv = useCallback((id: string) => {
+        const widget = widgetsRef.current.find((item) => item.id === id);
+        if (!widget) {
+            toast.error("Widget not found.");
+            return;
+        }
+
+        const csv = buildCsvContent(widget.data ?? [], widget.schema);
+        if (!csv) {
+            toast.error("No data available to export.");
+            return;
+        }
+
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const safeTitle = (widget.title || "widget-data")
+            .replace(/[^\w\s-]/g, "")
+            .trim()
+            .replace(/\s+/g, "-")
+            .toLowerCase();
+
+        link.href = url;
+        link.download = `${safeTitle || "widget-data"}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }, []);
 
     const resizeAllCharts = useCallback(() => {
         const charts = chartsRef.current;
@@ -669,6 +906,7 @@ export default function PopulationDashboard() {
         if (!meta) return;
         meta.observer?.disconnect?.();
         meta.instance?.dispose?.();
+        meta.root?.unmount?.();
         delete chartsRef.current[id];
     }, []);
 
@@ -701,7 +939,13 @@ export default function PopulationDashboard() {
         <div class="grid-stack-item-content overflow-hidden rounded-2xl border border-white/10 bg-slate-900/45 shadow-[0_20px_45px_rgba(2,6,23,0.45)] backdrop-blur-xl flex flex-col">
           <div class="px-4 py-3 border-b border-white/10 font-semibold text-slate-100 flex justify-between items-center gap-3">
             <span class="truncate">${title}</span>
-            <button class="delete-widget h-8 w-8 rounded-md border border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200 transition text-sm" type="button">X</button>
+            <div class="relative z-30 flex items-center gap-2">
+              <button class="widget-menu-toggle flex h-8 w-8 items-center justify-center rounded-md border border-white/15 text-slate-200 transition hover:bg-white/10" type="button" aria-label="Widget actions" data-widget-id="${id}">...</button>
+              <div class="widget-menu absolute right-0 top-10 z-40 hidden min-w-36 overflow-hidden rounded-lg border border-white/10 bg-slate-900/95 shadow-lg">
+                <button class="export-widget block w-full px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10" type="button" data-widget-id="${id}">Export CSV</button>
+              </div>
+              <button class="delete-widget h-8 w-8 rounded-md border border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200 transition text-sm" type="button">X</button>
+            </div>
           </div>
           <div id="${id}" class="flex-1 min-h-50"></div>
         </div>
@@ -722,6 +966,13 @@ export default function PopulationDashboard() {
 
             destroyChart(id);
 
+            if (type === "table") {
+                const root = createRoot(el);
+                root.render(<TableWidgetView data={data} schema={schema} />);
+                chartsRef.current[id] = { type, root };
+                return;
+            }
+
             const chart = echarts.init(el);
 
             chart.setOption(buildOption(type, data, schema), { notMerge: true });
@@ -737,6 +988,61 @@ export default function PopulationDashboard() {
         },
         [destroyChart],
     );
+
+    const setWidgetLoading = useCallback((id: string, type: ChartType) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        if (type === "table") {
+            const existingRoot = chartsRef.current[id]?.root;
+            const root = existingRoot ?? createRoot(el);
+            root.render(
+                <div className="flex h-full items-center justify-center px-6 text-sm text-slate-300">
+                    Running query...
+                </div>,
+            );
+            chartsRef.current[id] = { type, root };
+            return;
+        }
+
+        chartsRef.current[id]?.instance?.showLoading({
+            text: "Running query...",
+        });
+    }, []);
+
+    const setWidgetError = useCallback((id: string, type: ChartType) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        if (type === "table") {
+            const existingRoot = chartsRef.current[id]?.root;
+
+            if (existingRoot) {
+                existingRoot.render(
+                    <div className="flex h-full items-center justify-center px-6 text-center text-sm font-medium text-rose-300">
+                        Query failed
+                    </div>,
+                );
+            } else {
+                const root = createRoot(el);
+                root.render(
+                    <div className="flex h-full items-center justify-center px-6 text-center text-sm font-medium text-rose-300">
+                        Query failed
+                    </div>,
+                );
+                chartsRef.current[id] = { type, root };
+            }
+            return;
+        }
+
+        chartsRef.current[id]?.instance?.setOption({
+            title: {
+                text: "Query Failed",
+                left: "center",
+                textStyle: { color: "#f87171" },
+            },
+        });
+    }, []);
 
     const addWidget = useCallback(
         (opts: {
@@ -819,6 +1125,8 @@ export default function PopulationDashboard() {
                 chartType: selectedChartType,
                 title: selectedQuery.name,
                 position: { x: 0, y: bottomY, w: 6, h: 3 },
+                data: [],
+                schema: [],
             },
         ]);
 
@@ -832,17 +1140,8 @@ export default function PopulationDashboard() {
             }
 
             initChart(id, type, []);
-
-            chartsRef.current[id]?.instance.showLoading({
-                text: "Running query...",
-            });
+            setWidgetLoading(id, type);
             resizeAllCharts();
-
-            const meta = chartsRef.current[id];
-
-            meta?.instance?.showLoading({
-                text: "Running query...",
-            });
         };
 
         requestAnimationFrame(waitForDom);
@@ -852,6 +1151,7 @@ export default function PopulationDashboard() {
 
             const rows = result.data ?? [];
             const schema = result.result_schema ?? [];
+            updateWidgetData(id, rows, schema);
 
             const applyData = () => {
                 const meta = chartsRef.current[id];
@@ -861,9 +1161,14 @@ export default function PopulationDashboard() {
                     return;
                 }
 
-                meta.instance.hideLoading();
-                meta.instance.resize();
-                meta.instance.setOption(buildOption(type, rows, schema), {
+                if (type === "table") {
+                    initChart(id, type, rows, schema);
+                    return;
+                }
+
+                meta.instance?.hideLoading();
+                meta.instance?.resize();
+                meta.instance?.setOption(buildOption(type, rows, schema), {
                     notMerge: true,
                 });
             };
@@ -875,23 +1180,19 @@ export default function PopulationDashboard() {
             const meta = chartsRef.current[id];
 
             meta?.instance?.hideLoading();
-
-            meta?.instance?.setOption({
-                title: {
-                    text: "Query Failed",
-                    left: "center",
-                    textStyle: { color: "#f87171" },
-                },
-            });
+            setWidgetError(id, type);
         }
     }, [
         addWidget,
         getBottomY,
         initChart,
         resizeAllCharts,
+        setWidgetError,
+        setWidgetLoading,
         selectedChartType,
         selectedQueryId,
         queries,
+        updateWidgetData,
     ]);
 
     const saveDashboard = useCallback(async () => {
@@ -1070,8 +1371,37 @@ export default function PopulationDashboard() {
 
         const onClick = (e: MouseEvent) => {
             const target = e.target as HTMLElement | null;
-
             if (!target) return;
+
+            if (target.classList.contains("widget-menu-toggle")) {
+                const menuContainer = target.parentElement;
+                const menu = menuContainer?.querySelector(".widget-menu");
+                const willOpen = menu?.classList.contains("hidden");
+
+                container
+                    .querySelectorAll(".widget-menu")
+                    .forEach((menuEl) => menuEl.classList.add("hidden"));
+
+                if (menu && willOpen) {
+                    menu.classList.remove("hidden");
+                }
+                return;
+            }
+
+            if (target.classList.contains("export-widget")) {
+                const widgetId = target.getAttribute("data-widget-id");
+                container
+                    .querySelectorAll(".widget-menu")
+                    .forEach((menuEl) => menuEl.classList.add("hidden"));
+                if (widgetId) {
+                    exportWidgetCsv(widgetId);
+                }
+                return;
+            }
+
+            container
+                .querySelectorAll(".widget-menu")
+                .forEach((menuEl) => menuEl.classList.add("hidden"));
 
             if (target.classList.contains("delete-widget")) {
                 const widgetEl = target.closest(".grid-stack-item") as HTMLElement;
@@ -1106,7 +1436,7 @@ export default function PopulationDashboard() {
             gridRef.current?.destroy(false);
             gridRef.current = null;
         };
-    }, [deleteWidget, destroyChart, resizeAllCharts]);
+    }, [deleteWidget, destroyChart, exportWidgetCsv, resizeAllCharts]);
 
     return (
         <div className="min-h-screen bg-linear-to-br from-slate-950 via-slate-900 to-indigo-950 text-white relative overflow-x-hidden">
