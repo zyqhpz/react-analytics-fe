@@ -177,7 +177,7 @@ function TableWidgetView({
                         {visibleRows.map((row, index) => (
                             <TableRow
                                 key={`${startIndex + index}`}
-                                className="border-white/5 odd:bg-white/[0.02]"
+                                className="border-white/5 odd:bg-white/2"
                             >
                                 {columns.map((column) => (
                                     <TableCell

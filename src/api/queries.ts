@@ -16,7 +16,7 @@ export const fetchSavedQueries = async () => {
         throw new Error(json.description);
     }
 
-    return json.data as Query[] || [];
+    return (json.data as Query[]) || [];
 };
 
 export const fetchQueryWithData = async (queryId: string) => {
@@ -31,4 +31,19 @@ export const fetchQueryWithData = async (queryId: string) => {
     }
 
     return json.data as Query;
+};
+
+export const deleteSavedQuery = async (queryId: string) => {
+    const res = await fetch(`http://localhost:8080/api/v1/query/${queryId}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+    });
+
+    const json: QueryApiResponse = await res.json();
+
+    if (!res.ok) {
+        throw new Error(json.description);
+    }
+
+    return json.data;
 };

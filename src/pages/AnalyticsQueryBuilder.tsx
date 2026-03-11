@@ -1,5 +1,5 @@
 import { getAuthHeaders } from "@/api/client";
-import { fetchSavedQueries } from "@/api/queries";
+import { deleteSavedQuery, fetchSavedQueries } from "@/api/queries";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -57,6 +57,8 @@ export default function App() {
 
     const [queryName, setQueryName] = useState("");
     const [queryDescription, setQueryDescription] = useState("");
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     const [testSuccess, setTestSuccess] = useState(false);
 
@@ -165,16 +167,20 @@ export default function App() {
         );
     }, [joins]);
 
+    const refreshSavedQueries = async () => {
+        try {
+            const queries = await fetchSavedQueries();
+            setSavedQueries(queries);
+            return queries;
+        } catch (err) {
+            console.error("Failed to fetch saved queries:", err);
+            throw err;
+        }
+    };
+
     // FETCH SAVED QUERIES
     useEffect(() => {
-        (async () => {
-            try {
-                const queries = await fetchSavedQueries();
-                setSavedQueries(queries);
-            } catch (err) {
-                console.error("Failed to fetch saved queries:", err);
-            }
-        })();
+        void refreshSavedQueries();
     }, []);
 
     // LOAD QUERY INTO BUILDER
@@ -220,6 +226,11 @@ export default function App() {
         setAggregationField("");
         setAggregationAliasInput("");
         setLimit("");
+    };
+
+    const closeDeleteModal = () => {
+        if (isDeleting) return;
+        setShowDeleteModal(false);
     };
 
     const tableSchema = schema?.tables[table];
@@ -406,6 +417,14 @@ export default function App() {
         });
 
         if (res.ok) {
+            const data = await res.json();
+            const savedQuery = data?.data as Query | undefined;
+
+            if (savedQuery?.id) {
+                setSelectedQueryId(savedQuery.id);
+            }
+
+            await refreshSavedQueries();
             toast.success("Query saved successfully.");
         } else {
             const data = await res.json();
@@ -421,6 +440,25 @@ export default function App() {
                     </span>
                 ),
             });
+        }
+    };
+
+    const handleDeleteQuery = async () => {
+        if (!selectedQueryId) return;
+
+        try {
+            setIsDeleting(true);
+            await deleteSavedQuery(selectedQueryId);
+            await refreshSavedQueries();
+            setSelectedQueryId(null);
+            setShowDeleteModal(false);
+            toast.success("Query deleted successfully.");
+        } catch (err) {
+            toast.error("Failed to delete query.", {
+                description: err instanceof Error ? err.message : "Unknown error",
+            });
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -494,13 +532,23 @@ export default function App() {
                     </Select>
 
                     {selectedQueryId && (
-                        <Button
-                            variant="outline"
-                            onClick={deselectQuery}
-                            className="cursor-pointer"
-                        >
-                            Deselect
-                        </Button>
+                        <>
+                            <Button
+                                variant="outline"
+                                onClick={deselectQuery}
+                                className="cursor-pointer"
+                            >
+                                Deselect
+                            </Button>
+
+                            <Button
+                                variant="destructive"
+                                onClick={() => setShowDeleteModal(true)}
+                                className="cursor-pointer"
+                            >
+                                Delete Query
+                            </Button>
+                        </>
                     )}
                 </CardContent>
             </Card>
@@ -1086,6 +1134,39 @@ export default function App() {
                         </Table>
                     </CardContent>
                 </Card>
+            )}
+
+            {showDeleteModal && selectedQueryId && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                    <div className="w-full max-w-md rounded-xl border bg-background p-6 shadow-lg">
+                        <h2 className="text-lg font-semibold">Delete saved query?</h2>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                            This will send `DELETE /query/{selectedQueryId}` and remove
+                            <span className="font-medium text-foreground">
+                                {" "}
+                                {queryName || "the selected query"}
+                            </span>
+                            .
+                        </p>
+
+                        <div className="mt-6 flex justify-end gap-3">
+                            <Button
+                                variant="outline"
+                                onClick={closeDeleteModal}
+                                disabled={isDeleting}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                onClick={handleDeleteQuery}
+                                disabled={isDeleting}
+                            >
+                                {isDeleting ? "Deleting..." : "Delete"}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
