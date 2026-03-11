@@ -10,6 +10,7 @@ import { v7 as uuidv7 } from "uuid";
 
 import { fetchDashboard } from "@/api/dashboard";
 import { fetchQueryWithData, fetchSavedQueries } from "@/api/queries";
+import { CurrentUserBadge } from "@/components/CurrentUserBadge";
 import {
     Pagination,
     PaginationContent,
@@ -1457,8 +1458,11 @@ export default function PopulationDashboard() {
                                     {dashboardDescription || "Analytics workspace"}
                                 </p>
                             </div>
-                            <div className="rounded-lg border border-white/10 bg-slate-800/60 px-3 py-2 text-xs text-slate-300">
-                                Widgets: {widgets.length}
+                            <div className="flex flex-col items-end gap-2">
+                                <CurrentUserBadge />
+                                <div className="rounded-lg border border-white/10 bg-slate-800/60 px-3 py-2 text-xs text-slate-300">
+                                    Widgets: {widgets.length}
+                                </div>
                             </div>
                         </div>
 

@@ -1,5 +1,6 @@
 import { getAuthHeaders } from "@/api/client";
 import { deleteSavedQuery, fetchSavedQueries } from "@/api/queries";
+import { CurrentUserBadge } from "@/components/CurrentUserBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -492,14 +493,25 @@ export default function App() {
 
     return (
         <div className="container mx-auto py-10 space-y-8">
-            <Button
-                variant="outline"
-                className="flex items-center gap-2 cursor-pointer hover:bg-muted transition"
-                onClick={() => navigate("/dashboard")}
-            >
-                <IoArrowBack /> Back to Dashboard
-            </Button>
-            <h1 className="text-3xl font-bold">Advanced Report Builder</h1>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="space-y-4">
+                    <Button
+                        variant="outline"
+                        className="flex items-center gap-2 cursor-pointer hover:bg-muted transition"
+                        onClick={() => navigate("/dashboard")}
+                    >
+                        <IoArrowBack /> Back to Dashboard
+                    </Button>
+                    <div>
+                        <h1 className="text-3xl font-bold">Advanced Report Builder</h1>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                            Build, test, and save analytics queries.
+                        </p>
+                    </div>
+                </div>
+
+                <CurrentUserBadge className="bg-slate-950" />
+            </div>
 
             {/* SAVED QUERY SELECT */}
             <Card>
