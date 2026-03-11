@@ -15,6 +15,7 @@ export interface Query {
 export type Aggregation = {
     func: string;
     field: string;
+    alias?: string;
 };
 
 export type OrderBy = {

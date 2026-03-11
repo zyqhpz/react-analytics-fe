@@ -45,6 +45,9 @@ export default function App() {
     const [aggregations, setAggregations] = useState<Aggregation[]>([]);
     const [groupBy, setGroupBy] = useState<string[]>([]);
     const [groupByDateField, setGroupByDateField] = useState("");
+    const [aggregationFunc, setAggregationFunc] = useState("");
+    const [aggregationField, setAggregationField] = useState("");
+    const [aggregationAliasInput, setAggregationAliasInput] = useState("");
     const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
     const [results, setResults] = useState<any[]>([]);
 
@@ -74,6 +77,16 @@ export default function App() {
 
         return /(_at|date|time)$/i.test(name);
     };
+
+    const getDefaultAggregationAlias = (
+        agg: Pick<Aggregation, "func" | "field">,
+    ) => `${agg.func.toLowerCase()}_${agg.field}`;
+
+    const getAggregationAlias = (agg: Aggregation) =>
+        agg.alias?.trim() || getDefaultAggregationAlias(agg);
+
+    const hasSelectValue = (value: string | null | undefined) =>
+        typeof value === "string" && value.trim().length > 0;
 
     const getAllColumnsWithMeta = () => {
         if (!schema || !tableSchema) return [];
@@ -171,9 +184,17 @@ export default function App() {
         setTable(config.table || "");
         setJoins(config.joins || []);
         setSelectedColumns(config.select || []);
-        setAggregations(config.aggregations || []);
+        setAggregations(
+            (config.aggregations || []).map((agg: Aggregation) => ({
+                ...agg,
+                alias: agg.alias || "",
+            })),
+        );
         setGroupBy(config.group_by || []);
         setGroupByDateField("");
+        setAggregationFunc("");
+        setAggregationField("");
+        setAggregationAliasInput("");
         setOrderBy(config.order_by || []);
         setQuery(config.where || { combinator: "and", rules: [] });
         setHaving(config.having || { combinator: "and", rules: [] });
@@ -190,6 +211,9 @@ export default function App() {
         setQueryName("");
         setQueryDescription("");
         setGroupByDateField("");
+        setAggregationFunc("");
+        setAggregationField("");
+        setAggregationAliasInput("");
     };
 
     const tableSchema = schema?.tables[table];
@@ -273,9 +297,7 @@ export default function App() {
         );
     }, [joins]);
 
-    const aggregationAliases = aggregations.map(
-        (agg) => `${agg.func.toLowerCase()}_${agg.field}`,
-    );
+    const aggregationAliases = aggregations.map(getAggregationAlias);
 
     const effectiveSelectColumns = Array.from(
         new Set([...selectedColumns, ...groupBy]),
@@ -407,10 +429,10 @@ export default function App() {
             name: alias,
             label: alias,
         })),
-    ];
+    ].filter((field) => hasSelectValue(field.name));
 
-    const dateColumns = getAllColumnsWithMeta().filter((col) =>
-        isDateLikeColumn(col.type, col.name),
+    const dateColumns = getAllColumnsWithMeta().filter(
+        (col) => hasSelectValue(col.name) && isDateLikeColumn(col.type, col.name),
     );
 
     if (!schema || !tableSchema) {
@@ -452,11 +474,13 @@ export default function App() {
                         </SelectTrigger>
 
                         <SelectContent>
-                            {savedQueries.map((q) => (
-                                <SelectItem key={q.id} value={q.id}>
-                                    {q.name}
-                                </SelectItem>
-                            ))}
+                            {savedQueries
+                                .filter((q) => hasSelectValue(q.id))
+                                .map((q) => (
+                                    <SelectItem key={q.id} value={q.id}>
+                                        {q.name}
+                                    </SelectItem>
+                                ))}
                         </SelectContent>
                     </Select>
 
@@ -487,6 +511,9 @@ export default function App() {
                             setAggregations([]);
                             setGroupBy([]);
                             setGroupByDateField("");
+                            setAggregationFunc("");
+                            setAggregationField("");
+                            setAggregationAliasInput("");
                             setOrderBy([]);
                             setQuery({ combinator: "and", rules: [] });
                             setHaving({ combinator: "and", rules: [] });
@@ -496,11 +523,13 @@ export default function App() {
                             <SelectValue placeholder="Select table" />
                         </SelectTrigger>
                         <SelectContent>
-                            {Object.keys(schema.tables).map((t) => (
-                                <SelectItem key={t} value={t}>
-                                    {t}
-                                </SelectItem>
-                            ))}
+                            {Object.keys(schema.tables)
+                                .filter(hasSelectValue)
+                                .map((t) => (
+                                    <SelectItem key={t} value={t}>
+                                        {t}
+                                    </SelectItem>
+                                ))}
                         </SelectContent>
                     </Select>
                 </CardContent>
@@ -657,7 +686,7 @@ export default function App() {
                         <div className="space-y-2">
                             {groupBy.map((item, index) => (
                                 <div
-                                    key={`${item}-${index}`}
+                                    key={index}
                                     className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
                                 >
                                     <span>{item}</span>
@@ -685,7 +714,8 @@ export default function App() {
                 <CardContent className="space-y-4">
                     <div className="flex gap-4">
                         <select
-                            id="aggFunc"
+                            value={aggregationFunc}
+                            onChange={(e) => setAggregationFunc(e.target.value)}
                             className="border rounded px-3 py-2 cursor-pointer hover:border-primary/40 transition"
                         >
                             <option value="">Function</option>
@@ -697,7 +727,8 @@ export default function App() {
                         </select>
 
                         <select
-                            id="aggField"
+                            value={aggregationField}
+                            onChange={(e) => setAggregationField(e.target.value)}
                             className="border rounded px-3 py-2 cursor-pointer hover:border-primary/40 transition"
                         >
                             <option value="">Field</option>
@@ -708,16 +739,37 @@ export default function App() {
                             ))}
                         </select>
 
+                        <input
+                            type="text"
+                            value={aggregationAliasInput}
+                            onChange={(e) => setAggregationAliasInput(e.target.value)}
+                            className="border rounded px-3 py-2"
+                            placeholder={
+                                aggregationFunc && aggregationField
+                                    ? `Alias (default: ${getDefaultAggregationAlias({
+                                        func: aggregationFunc,
+                                        field: aggregationField,
+                                    })})`
+                                    : "Alias"
+                            }
+                        />
+
                         <Button
                             onClick={() => {
-                                const func = (
-                                    document.getElementById("aggFunc") as HTMLSelectElement
-                                ).value;
-                                const field = (
-                                    document.getElementById("aggField") as HTMLSelectElement
-                                ).value;
+                                const func = aggregationFunc;
+                                const field = aggregationField;
                                 if (!func || !field) return;
-                                setAggregations((prev) => [...prev, { func, field }]);
+                                setAggregations((prev) => [
+                                    ...prev,
+                                    {
+                                        func,
+                                        field,
+                                        alias: aggregationAliasInput.trim(),
+                                    },
+                                ]);
+                                setAggregationFunc("");
+                                setAggregationField("");
+                                setAggregationAliasInput("");
                             }}
                         >
                             Add
@@ -725,14 +777,32 @@ export default function App() {
                     </div>
 
                     {aggregations.map((agg, index) => {
-                        const alias = `${agg.func.toLowerCase()}_${agg.field}`;
+                        const alias = getAggregationAlias(agg);
                         return (
                             <div
                                 key={index}
-                                className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
+                                className="flex items-center gap-3 border rounded p-3 transition hover:bg-muted/40"
                             >
-                                <span>
-                                    {agg.func}({agg.field}) AS {alias}
+                                <span className="min-w-0 shrink-0 text-sm">
+                                    {agg.func}({agg.field}) AS
+                                </span>
+                                <input
+                                    type="text"
+                                    value={agg.alias || ""}
+                                    onChange={(e) =>
+                                        setAggregations((prev) =>
+                                            prev.map((item, itemIndex) =>
+                                                itemIndex === index
+                                                    ? { ...item, alias: e.target.value }
+                                                    : item,
+                                            ),
+                                        )
+                                    }
+                                    className="flex-1 border rounded px-3 py-2"
+                                    placeholder={getDefaultAggregationAlias(agg)}
+                                />
+                                <span className="text-xs text-muted-foreground shrink-0">
+                                    Result: {alias}
                                 </span>
                                 <Button
                                     variant="destructive"
