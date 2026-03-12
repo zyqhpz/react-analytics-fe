@@ -20,7 +20,7 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { type Query } from "@/types/query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { FaCheckCircle } from "react-icons/fa";
 import { IoArrowBack } from "react-icons/io5";
 import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
@@ -28,7 +28,17 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import type { GetSchemasResponse } from "@/api/queries";
-import type { Aggregation, FullSchema, Join, OrderBy } from "@/types/query";
+import type {
+    Aggregation,
+    FullSchema,
+    Join,
+    OrderBy,
+    PivotOptions,
+    PivotValue,
+    PivotValueValue,
+    QueryRow,
+    VisualQueryRequest,
+} from "@/types/query";
 
 export default function App() {
     const [schema, setSchema] = useState<FullSchema | null>(null);
@@ -49,9 +59,17 @@ export default function App() {
     const [aggregationFunc, setAggregationFunc] = useState("");
     const [aggregationField, setAggregationField] = useState("");
     const [aggregationAliasInput, setAggregationAliasInput] = useState("");
+    const [pivotEnabled, setPivotEnabled] = useState(false);
+    const [pivotField, setPivotField] = useState("");
+    const [pivotValueField, setPivotValueField] = useState("");
+    const [pivotFunc, setPivotFunc] = useState("");
+    const [pivotValues, setPivotValues] = useState<PivotValue[]>([]);
+    const [pivotValueType, setPivotValueType] = useState("string");
+    const [pivotValueInput, setPivotValueInput] = useState("");
+    const [pivotAliasInput, setPivotAliasInput] = useState("");
     const [limit, setLimit] = useState("");
     const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
-    const [results, setResults] = useState<any[]>([]);
+    const [results, setResults] = useState<QueryRow[]>([]);
 
     const [savedQueries, setSavedQueries] = useState<Query[]>([]);
     const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null);
@@ -91,6 +109,33 @@ export default function App() {
 
     const hasSelectValue = (value: string | null | undefined) =>
         typeof value === "string" && value.trim().length > 0;
+
+    const stringifyPivotValue = (value: PivotValueValue) => {
+        if (value === null) return "null";
+        if (typeof value === "string") return value;
+        return String(value);
+    };
+
+    const parsePivotValue = (): PivotValueValue | undefined => {
+        const rawValue = pivotValueInput.trim();
+
+        switch (pivotValueType) {
+            case "number": {
+                if (!rawValue) return undefined;
+                const parsed = Number(rawValue);
+                return Number.isFinite(parsed) ? parsed : undefined;
+            }
+            case "boolean":
+                if (rawValue.toLowerCase() === "true") return true;
+                if (rawValue.toLowerCase() === "false") return false;
+                return undefined;
+            case "null":
+                return null;
+            case "string":
+            default:
+                return rawValue ? rawValue : undefined;
+        }
+    };
 
     const parsedLimit =
         limit.trim() && Number(limit) > 0 ? Math.floor(Number(limit)) : undefined;
@@ -206,6 +251,15 @@ export default function App() {
         setAggregationFunc("");
         setAggregationField("");
         setAggregationAliasInput("");
+        const pivot = config.pivot as PivotOptions | undefined;
+        setPivotEnabled(Boolean(pivot?.enabled));
+        setPivotField(pivot?.pivot_field || "");
+        setPivotValueField(pivot?.value_field || "");
+        setPivotFunc(pivot?.func || "");
+        setPivotValues(pivot?.values || []);
+        setPivotValueType("string");
+        setPivotValueInput("");
+        setPivotAliasInput("");
         setLimit(config.limit ? String(config.limit) : "");
         setOrderBy(config.order_by || []);
         setQuery(config.where || { combinator: "and", rules: [] });
@@ -226,6 +280,14 @@ export default function App() {
         setAggregationFunc("");
         setAggregationField("");
         setAggregationAliasInput("");
+        setPivotEnabled(false);
+        setPivotField("");
+        setPivotValueField("");
+        setPivotFunc("");
+        setPivotValues([]);
+        setPivotValueType("string");
+        setPivotValueInput("");
+        setPivotAliasInput("");
         setLimit("");
     };
 
@@ -236,9 +298,7 @@ export default function App() {
 
     const tableSchema = schema?.tables[table];
 
-    const fields = useMemo(() => {
-        return getAllColumns();
-    }, [schema, table, joins]);
+    const fields = getAllColumns();
 
     const toggleColumn = (column: string) => {
         setSelectedColumns((prev) => {
@@ -290,9 +350,24 @@ export default function App() {
     };
 
     useEffect(() => {
+        const getFieldJoinTable = (value: string | null | undefined) => {
+            if (!value) return null;
+            if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(value)) return null;
+            return value.split(".")[0];
+        };
+
+        const isFieldStillAvailable = (value: string | null | undefined) => {
+            if (!hasSelectValue(value)) return false;
+
+            const joinTable = getFieldJoinTable(value);
+            if (!joinTable) return true;
+
+            return joins.some((join) => join.table === joinTable);
+        };
+
         setSelectedColumns((prev) =>
             prev.filter((col) => {
-                const tbl = getJoinTableFromField(col);
+                const tbl = getFieldJoinTable(col);
                 if (!tbl) return true;
                 return joins.some((j) => j.table === tbl);
             }),
@@ -300,7 +375,7 @@ export default function App() {
 
         setGroupBy((prev) =>
             prev.filter((col) => {
-                const tbl = getJoinTableFromField(col);
+                const tbl = getFieldJoinTable(col);
                 if (!tbl) return true;
                 return joins.some((j) => j.table === tbl);
             }),
@@ -308,11 +383,14 @@ export default function App() {
 
         setOrderBy((prev) =>
             prev.filter((o) => {
-                const tbl = getJoinTableFromField(o.field);
+                const tbl = getFieldJoinTable(o.field);
                 if (!tbl) return true;
                 return joins.some((j) => j.table === tbl);
             }),
         );
+
+        setPivotField((prev) => (isFieldStillAvailable(prev) ? prev : ""));
+        setPivotValueField((prev) => (isFieldStillAvailable(prev) ? prev : ""));
     }, [joins]);
 
     const aggregationAliases = aggregations.map(getAggregationAlias);
@@ -326,13 +404,52 @@ export default function App() {
         label: alias,
     }));
 
+    const buildPivotOptions = (): PivotOptions | undefined => {
+        if (!pivotEnabled) return undefined;
+
+        return {
+            enabled: true,
+            pivot_field: pivotField,
+            value_field: pivotValueField,
+            func: pivotFunc,
+            values: pivotValues,
+        };
+    };
+
+    const validatePivotOptions = () => {
+        if (!pivotEnabled) return true;
+
+        if (!pivotField || !pivotValueField || !pivotFunc) {
+            toast.error("Pivot is incomplete.", {
+                description:
+                    "Select pivot field, value field, and function before running or saving.",
+            });
+            return false;
+        }
+
+        if (pivotValues.length === 0) {
+            toast.error("Pivot needs at least one value.", {
+                description:
+                    "Add one or more pivot values with aliases before running or saving.",
+            });
+            return false;
+        }
+
+        return true;
+    };
+
     const runQuery = async () => {
-        const payload = {
+        if (!validatePivotOptions()) return;
+
+        const pivot = buildPivotOptions();
+
+        const payload: VisualQueryRequest = {
             table,
             joins,
             select: effectiveSelectColumns,
             aggregations,
             group_by: groupBy,
+            ...(pivot ? { pivot } : {}),
             where: query,
             having,
             order_by: orderBy,
@@ -382,16 +499,26 @@ export default function App() {
         query,
         having,
         orderBy,
+        pivotEnabled,
+        pivotField,
+        pivotValueField,
+        pivotFunc,
+        pivotValues,
         limit,
     ]);
 
     const saveQuery = async () => {
-        const config = {
+        if (!validatePivotOptions()) return;
+
+        const pivot = buildPivotOptions();
+
+        const config: VisualQueryRequest = {
             table,
             joins,
             select: effectiveSelectColumns,
             aggregations,
             group_by: groupBy,
+            ...(pivot ? { pivot } : {}),
             where: query,
             having,
             order_by: orderBy,
@@ -583,6 +710,14 @@ export default function App() {
                             setAggregationFunc("");
                             setAggregationField("");
                             setAggregationAliasInput("");
+                            setPivotEnabled(false);
+                            setPivotField("");
+                            setPivotValueField("");
+                            setPivotFunc("");
+                            setPivotValues([]);
+                            setPivotValueType("string");
+                            setPivotValueInput("");
+                            setPivotAliasInput("");
                             setLimit("");
                             setOrderBy([]);
                             setQuery({ combinator: "and", rules: [] });
@@ -888,6 +1023,181 @@ export default function App() {
                             </div>
                         );
                     })}
+                </CardContent>
+            </Card>
+
+            {/* PIVOT */}
+            <Card>
+                <CardHeader>
+                    <CardTitle>Pivot</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center gap-3">
+                        <Checkbox
+                            checked={pivotEnabled}
+                            onCheckedChange={(checked) => setPivotEnabled(Boolean(checked))}
+                        />
+                        <label className="text-sm font-medium cursor-pointer">
+                            Enable pivot output
+                        </label>
+                    </div>
+
+                    {pivotEnabled && (
+                        <>
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                                <div className="space-y-2">
+                                    <p className="text-sm font-medium">Pivot field</p>
+                                    <Select value={pivotField} onValueChange={setPivotField}>
+                                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                            <SelectValue placeholder="Select pivot field" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {getAllColumns().map((col) => (
+                                                <SelectItem key={col.name} value={col.name}>
+                                                    {col.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <p className="text-sm font-medium">Value field</p>
+                                    <Select
+                                        value={pivotValueField}
+                                        onValueChange={setPivotValueField}
+                                    >
+                                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                            <SelectValue placeholder="Select value field" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {getAllColumns().map((col) => (
+                                                <SelectItem key={col.name} value={col.name}>
+                                                    {col.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <p className="text-sm font-medium">Function</p>
+                                    <Select value={pivotFunc} onValueChange={setPivotFunc}>
+                                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                            <SelectValue placeholder="Select function" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="SUM">SUM</SelectItem>
+                                            <SelectItem value="COUNT">COUNT</SelectItem>
+                                            <SelectItem value="AVG">AVG</SelectItem>
+                                            <SelectItem value="MIN">MIN</SelectItem>
+                                            <SelectItem value="MAX">MAX</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+
+                            <div className="space-y-3 rounded-lg border p-4">
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                                    <Select
+                                        value={pivotValueType}
+                                        onValueChange={setPivotValueType}
+                                    >
+                                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                            <SelectValue placeholder="Value type" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="string">String</SelectItem>
+                                            <SelectItem value="number">Number</SelectItem>
+                                            <SelectItem value="boolean">Boolean</SelectItem>
+                                            <SelectItem value="null">Null</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+
+                                    <input
+                                        type="text"
+                                        value={pivotValueInput}
+                                        onChange={(e) => setPivotValueInput(e.target.value)}
+                                        disabled={pivotValueType === "null"}
+                                        placeholder={
+                                            pivotValueType === "boolean"
+                                                ? "true or false"
+                                                : pivotValueType === "number"
+                                                    ? "Pivot value"
+                                                    : pivotValueType === "null"
+                                                        ? "No input needed for null"
+                                                        : "Pivot value"
+                                        }
+                                        className="border rounded px-3 py-2 md:col-span-2 disabled:bg-muted disabled:text-muted-foreground"
+                                    />
+
+                                    <input
+                                        type="text"
+                                        value={pivotAliasInput}
+                                        onChange={(e) => setPivotAliasInput(e.target.value)}
+                                        placeholder="Alias"
+                                        className="border rounded px-3 py-2"
+                                    />
+                                </div>
+
+                                <Button
+                                    onClick={() => {
+                                        const parsedValue = parsePivotValue();
+                                        const alias = pivotAliasInput.trim();
+
+                                        if (parsedValue === undefined || !alias) {
+                                            toast.error("Invalid pivot value.", {
+                                                description:
+                                                    "Provide a valid pivot value and alias before adding it.",
+                                            });
+                                            return;
+                                        }
+
+                                        setPivotValues((prev) => [
+                                            ...prev,
+                                            {
+                                                value: parsedValue,
+                                                alias,
+                                            },
+                                        ]);
+                                        setPivotValueType("string");
+                                        setPivotValueInput("");
+                                        setPivotAliasInput("");
+                                    }}
+                                    variant="secondary"
+                                >
+                                    Add Pivot Value
+                                </Button>
+
+                                {pivotValues.length > 0 && (
+                                    <div className="space-y-2">
+                                        {pivotValues.map((item, index) => (
+                                            <div
+                                                key={`${item.alias}-${index}`}
+                                                className="flex items-center justify-between gap-3 rounded border p-3 transition hover:bg-muted/40"
+                                            >
+                                                <span className="text-sm">
+                                                    Value: {stringifyPivotValue(item.value)} | Alias:{" "}
+                                                    {item.alias}
+                                                </span>
+                                                <Button
+                                                    variant="destructive"
+                                                    size="sm"
+                                                    onClick={() =>
+                                                        setPivotValues((prev) =>
+                                                            prev.filter((_, i) => i !== index),
+                                                        )
+                                                    }
+                                                >
+                                                    Remove
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
                 </CardContent>
             </Card>
 

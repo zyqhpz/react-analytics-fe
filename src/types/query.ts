@@ -18,6 +18,21 @@ export type Aggregation = {
     alias?: string;
 };
 
+export type PivotValueValue = string | number | boolean | null;
+
+export type PivotValue = {
+    value: PivotValueValue;
+    alias: string;
+};
+
+export type PivotOptions = {
+    enabled: boolean;
+    pivot_field: string;
+    value_field: string;
+    func: string;
+    values: PivotValue[];
+};
+
 export type OrderBy = {
     field: string;
     direction: string;
@@ -43,4 +58,17 @@ export type TableSchema = {
 
 export type FullSchema = {
     tables: Record<string, TableSchema>;
+};
+
+export type VisualQueryRequest = {
+    table: string;
+    joins: Join[];
+    select: string[];
+    aggregations: Aggregation[];
+    group_by: string[];
+    pivot?: PivotOptions;
+    where: unknown;
+    having: unknown;
+    order_by: OrderBy[];
+    limit?: number;
 };
