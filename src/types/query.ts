@@ -66,6 +66,7 @@ export type VisualQueryRequest = {
     select: string[];
     aggregations: Aggregation[];
     group_by: string[];
+    fill_missing_dates?: boolean;
     pivot?: PivotOptions;
     where: unknown;
     having: unknown;

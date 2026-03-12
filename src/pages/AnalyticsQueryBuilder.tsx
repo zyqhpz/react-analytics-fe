@@ -67,6 +67,7 @@ export default function App() {
     const [pivotValueType, setPivotValueType] = useState("string");
     const [pivotValueInput, setPivotValueInput] = useState("");
     const [pivotAliasInput, setPivotAliasInput] = useState("");
+    const [fillMissingDates, setFillMissingDates] = useState(false);
     const [limit, setLimit] = useState("");
     const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
     const [results, setResults] = useState<QueryRow[]>([]);
@@ -260,6 +261,7 @@ export default function App() {
         setPivotValueType("string");
         setPivotValueInput("");
         setPivotAliasInput("");
+        setFillMissingDates(Boolean(config.fill_missing_dates));
         setLimit(config.limit ? String(config.limit) : "");
         setOrderBy(config.order_by || []);
         setQuery(config.where || { combinator: "and", rules: [] });
@@ -288,6 +290,7 @@ export default function App() {
         setPivotValueType("string");
         setPivotValueInput("");
         setPivotAliasInput("");
+        setFillMissingDates(false);
         setLimit("");
     };
 
@@ -449,6 +452,7 @@ export default function App() {
             select: effectiveSelectColumns,
             aggregations,
             group_by: groupBy,
+            ...(fillMissingDates ? { fill_missing_dates: true } : {}),
             ...(pivot ? { pivot } : {}),
             where: query,
             having,
@@ -505,6 +509,7 @@ export default function App() {
         pivotFunc,
         pivotValues,
         limit,
+        fillMissingDates,
     ]);
 
     const saveQuery = async () => {
@@ -518,6 +523,7 @@ export default function App() {
             select: effectiveSelectColumns,
             aggregations,
             group_by: groupBy,
+            ...(fillMissingDates ? { fill_missing_dates: true } : {}),
             ...(pivot ? { pivot } : {}),
             where: query,
             having,
@@ -1374,6 +1380,20 @@ export default function App() {
                     <p className="text-sm text-muted-foreground">
                         Leave empty to fetch without a limit.
                     </p>
+                    <label className="flex items-center gap-3 pt-2">
+                        <Checkbox
+                            checked={fillMissingDates}
+                            onCheckedChange={(checked) =>
+                                setFillMissingDates(Boolean(checked))
+                            }
+                        />
+                        <div>
+                            <p className="text-sm font-medium">Fill Missing Dates</p>
+                            <p className="text-sm text-muted-foreground">
+                                Include empty dates with no data in test results.
+                            </p>
+                        </div>
+                    </label>
                 </CardContent>
             </Card>
 
