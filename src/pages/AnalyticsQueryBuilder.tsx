@@ -24,7 +24,7 @@ import { useEffect, useState } from "react";
 import { FaCheckCircle } from "react-icons/fa";
 import { IoArrowBack } from "react-icons/io5";
 import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import type { GetSchemasResponse } from "@/api/queries";
@@ -643,7 +643,15 @@ export default function App() {
                     </div>
                 </div>
 
-                <CurrentUserBadge className="bg-slate-950" />
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                    <Link
+                        to="/graphql-playground"
+                        className="inline-flex items-center rounded-md border border-cyan-300/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-700 transition hover:bg-cyan-500/20"
+                    >
+                        GraphQL Playground
+                    </Link>
+                    <CurrentUserBadge className="bg-slate-950" />
+                </div>
             </div>
 
             {/* SAVED QUERY SELECT */}

@@ -5,7 +5,7 @@ import { GridStack, type GridStackNode, type GridStackWidget } from "gridstack";
 import "gridstack/dist/gridstack.min.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { v7 as uuidv7 } from "uuid";
 
 import { fetchDashboard } from "@/api/dashboard";
@@ -1704,6 +1704,13 @@ export default function PopulationDashboard() {
                             >
                                 Open Query Builder
                             </button>
+
+                            <Link
+                                to="/graphql-playground"
+                                className="px-5 py-2.5 rounded-xl border border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25 transition"
+                            >
+                                Open GraphQL Playground
+                            </Link>
                         </div>
                     </div>
 
