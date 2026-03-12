@@ -59,6 +59,18 @@ type ChartTypeGuide = {
     notes?: string[];
 };
 
+type QueryPreview = {
+    data: QueryRow[];
+    schema?: string[];
+};
+
+type QueryShapeSummary = {
+    fieldCount: number;
+    numericFieldCount: number;
+    categoryFieldCount: number;
+    hasRows: boolean;
+};
+
 const DASHBOARD_ID = "019c7377-64b0-75c7-93e3-8f2152715aa5";
 
 const formatCompactNumber = (value: unknown): string => {
@@ -251,6 +263,97 @@ const inferDataShape = (data: QueryRow[], schema?: string[]) => {
     return { keys, numericKeys, valueKeys, categoryKey, primaryValueKey };
 };
 
+const summarizeQueryShape = (
+    data: QueryRow[] = [],
+    schema?: string[],
+): QueryShapeSummary => {
+    const keys = getColumns(data, schema);
+    const numericKeys = keys.filter((key) =>
+        data.length ? data.every((row) => toNumeric(row[key]) !== null) : false,
+    );
+
+    return {
+        fieldCount: keys.length,
+        numericFieldCount: numericKeys.length,
+        categoryFieldCount: Math.max(0, keys.length - numericKeys.length),
+        hasRows: data.length > 0,
+    };
+};
+
+const isChartTypeCompatible = (
+    chartType: string,
+    shape: QueryShapeSummary | null,
+): boolean => {
+    if (!shape || shape.fieldCount === 0) return false;
+
+    switch (chartType) {
+        case "table":
+            return true;
+        case "pie":
+        case "funnel":
+        case "radar":
+        case "sunburst":
+        case "treemap":
+        case "tree":
+        case "heatmap":
+        case "line":
+        case "bar":
+        case "scatter":
+        case "effectScatter":
+        case "pictorialBar":
+            return shape.fieldCount >= 2 && shape.numericFieldCount >= 1;
+        case "stackedArea":
+        case "stackedBar":
+            return shape.fieldCount >= 3 && shape.numericFieldCount >= 2;
+        case "gauge":
+            return shape.numericFieldCount >= 1;
+        case "candlestick":
+            return shape.fieldCount >= 5 && shape.numericFieldCount >= 4;
+        case "boxplot":
+            return shape.fieldCount >= 6 && shape.numericFieldCount >= 5;
+        default:
+            return false;
+    }
+};
+
+const CARTESIAN_SERIES_PALETTE = [
+    {
+        solid: "#38bdf8",
+        stroke: "#7dd3fc",
+        fillTop: "rgba(56, 189, 248, 0.8)",
+        fillBottom: "rgba(56, 189, 248, 0.14)",
+        border: "rgba(186, 230, 253, 0.9)",
+    },
+    {
+        solid: "#f59e0b",
+        stroke: "#fbbf24",
+        fillTop: "rgba(245, 158, 11, 0.78)",
+        fillBottom: "rgba(245, 158, 11, 0.12)",
+        border: "rgba(253, 230, 138, 0.9)",
+    },
+    {
+        solid: "#34d399",
+        stroke: "#6ee7b7",
+        fillTop: "rgba(52, 211, 153, 0.78)",
+        fillBottom: "rgba(52, 211, 153, 0.13)",
+        border: "rgba(167, 243, 208, 0.9)",
+    },
+    {
+        solid: "#f472b6",
+        stroke: "#f9a8d4",
+        fillTop: "rgba(244, 114, 182, 0.76)",
+        fillBottom: "rgba(244, 114, 182, 0.12)",
+        border: "rgba(251, 207, 232, 0.9)",
+    },
+    {
+        solid: "#a78bfa",
+        stroke: "#c4b5fd",
+        fillTop: "rgba(167, 139, 250, 0.76)",
+        fillBottom: "rgba(167, 139, 250, 0.12)",
+        border: "rgba(221, 214, 254, 0.88)",
+    },
+];
+
 const fallbackCartesianOption = (
     chartType: string,
     categoryData: string[],
@@ -311,6 +414,25 @@ const CHART_TYPE_GUIDES: Record<string, ChartTypeGuide> = {
         required: ["1 category field", "1+ numeric field"],
         optional: ["Additional numeric fields for grouped bars"],
         sampleRow: { provider_type: "FPX", total_amount: 87000.23 },
+    },
+    stackedBar: {
+        description:
+            "Compare cumulative totals across categories with stacked segments.",
+        minimumFields: 3,
+        required: ["1 category field", "2+ numeric fields"],
+        optional: ["More numeric fields for additional stacked segments"],
+        sampleRow: { month: "2026-01", approved: 120, pending: 45, rejected: 8 },
+        notes: ["Works best when each numeric column is part of the same total."],
+    },
+    stackedArea: {
+        description: "Show cumulative trend contribution over categories or time.",
+        minimumFields: 3,
+        required: ["1 category field", "2+ numeric fields"],
+        optional: ["More numeric fields for additional stacked bands"],
+        sampleRow: { month: "2026-01", web: 1200, retail: 860, partner: 420 },
+        notes: [
+            "Uses stacked lines with filled area to show contribution over time.",
+        ],
     },
     scatter: {
         description: "Relationship/distribution of numeric values.",
@@ -477,6 +599,8 @@ export function buildOption(
         value: toNumeric(row[primaryValueKey]) ?? 0,
     }));
     const selectedType = String(type);
+    const isStackedArea = selectedType === "stackedArea";
+    const isStackedBar = selectedType === "stackedBar";
 
     if (selectedType === "pie" || selectedType === "funnel") {
         return {
@@ -710,6 +834,8 @@ export function buildOption(
     const isMultiCartesianType =
         selectedType === "line" ||
         selectedType === "bar" ||
+        isStackedArea ||
+        isStackedBar ||
         selectedType === "scatter" ||
         selectedType === "effectScatter" ||
         selectedType === "pictorialBar";
@@ -717,29 +843,55 @@ export function buildOption(
         (fallbackCartesianOption(selectedType, categoryData, baseSeriesData)
             .series as any[]) ?? [];
     const cartesianSeries = isMultiCartesianType
-        ? valueKeys.map((key, index) => ({
-            type: selectedType as any,
-            name: key,
-            data: data.map((row) => toNumeric(row[key]) ?? 0),
-            smooth: selectedType === "line",
-            itemStyle: { color: index % 2 === 0 ? "#60a5fa" : "#22d3ee" },
-            lineStyle: { width: 3, color: index % 2 === 0 ? "#60a5fa" : "#22d3ee" },
-            areaStyle:
-                selectedType === "line"
-                    ? {
-                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                            {
-                                offset: 0,
-                                color:
-                                    index % 2 === 0
-                                        ? "rgba(96, 165, 250, 0.45)"
-                                        : "rgba(34, 211, 238, 0.45)",
-                            },
-                            { offset: 1, color: "rgba(96, 165, 250, 0.03)" },
-                        ]),
-                    }
-                    : undefined,
-        }))
+        ? valueKeys.map((key, index) => {
+            const palette =
+                CARTESIAN_SERIES_PALETTE[index % CARTESIAN_SERIES_PALETTE.length];
+
+            return {
+                type: isStackedArea
+                    ? ("line" as const)
+                    : isStackedBar
+                        ? ("bar" as const)
+                        : (selectedType as any),
+                name: key,
+                data: data.map((row) => toNumeric(row[key]) ?? 0),
+                stack: isStackedArea || isStackedBar ? "total" : undefined,
+                smooth: selectedType === "line" || isStackedArea,
+                barMaxWidth: selectedType === "bar" || isStackedBar ? 42 : undefined,
+                emphasis: {
+                    focus: "series" as const,
+                },
+                itemStyle: {
+                    color: palette.solid,
+                    borderColor:
+                        selectedType === "bar" || isStackedBar
+                            ? palette.border
+                            : palette.solid,
+                    borderWidth: selectedType === "bar" || isStackedBar ? 1.25 : 0,
+                    borderRadius:
+                        selectedType === "bar" ? [8, 8, 0, 0] : isStackedBar ? 0 : 0,
+                },
+                lineStyle: {
+                    width: 3,
+                    color: palette.stroke,
+                },
+                areaStyle:
+                    selectedType === "line" || isStackedArea
+                        ? {
+                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                {
+                                    offset: 0,
+                                    color: palette.fillTop,
+                                },
+                                {
+                                    offset: 1,
+                                    color: palette.fillBottom,
+                                },
+                            ]),
+                        }
+                        : undefined,
+            };
+        })
         : fallbackSeries;
 
     return {
@@ -817,6 +969,9 @@ export default function PopulationDashboard() {
 
     const [queries, setQueries] = useState<Query[]>([]);
     const [selectedQueryId, setSelectedQueryId] = useState<string>("");
+    const [selectedQueryPreview, setSelectedQueryPreview] =
+        useState<QueryPreview | null>(null);
+    const [loadingQueryPreview, setLoadingQueryPreview] = useState(false);
 
     const navigate = useNavigate();
     const chartTypeOptions = useMemo(() => {
@@ -831,6 +986,7 @@ export default function PopulationDashboard() {
             .map((key) => key.replace(/Chart$/, ""))
             .map((base) => `${base.charAt(0).toLowerCase()}${base.slice(1)}`)
             .filter((value, index, array) => array.indexOf(value) === index)
+            .concat("stackedArea", "stackedBar")
             .concat("table")
             .filter((value, index, array) => array.indexOf(value) === index)
             .sort((a, b) => a.localeCompare(b))
@@ -844,6 +1000,27 @@ export default function PopulationDashboard() {
     const selectedChartGuide = useMemo(
         () => getChartTypeGuide(String(selectedChartType)),
         [selectedChartType],
+    );
+    const selectedQueryShape = useMemo(
+        () =>
+            selectedQueryPreview
+                ? summarizeQueryShape(
+                    selectedQueryPreview.data,
+                    selectedQueryPreview.schema,
+                )
+                : null,
+        [selectedQueryPreview],
+    );
+    const compatibleChartTypes = useMemo(
+        () =>
+            new Set(
+                chartTypeOptions
+                    .filter((option) =>
+                        isChartTypeCompatible(option.value, selectedQueryShape),
+                    )
+                    .map((option) => option.value),
+            ),
+        [chartTypeOptions, selectedQueryShape],
     );
 
     useEffect(() => {
@@ -1091,6 +1268,45 @@ export default function PopulationDashboard() {
             }
         })();
     }, [showModal]);
+
+    useEffect(() => {
+        if (!showModal || !selectedQueryId) {
+            setSelectedQueryPreview(null);
+            setLoadingQueryPreview(false);
+            return;
+        }
+
+        let cancelled = false;
+
+        void (async () => {
+            try {
+                setLoadingQueryPreview(true);
+                const result = await fetchQueryWithData(selectedQueryId);
+
+                if (cancelled) return;
+
+                setSelectedQueryPreview({
+                    data: result.data ?? [],
+                    schema: result.result_schema ?? [],
+                });
+            } catch (err) {
+                if (cancelled) return;
+
+                setSelectedQueryPreview(null);
+                toast.error(
+                    "Failed to inspect query format: " + (err as Error).message,
+                );
+            } finally {
+                if (!cancelled) {
+                    setLoadingQueryPreview(false);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [showModal, selectedQueryId]);
 
     const confirmAddChart = useCallback(async () => {
         setShowModal(false);
@@ -1523,29 +1739,54 @@ export default function PopulationDashboard() {
                         <div className="mb-6">
                             <p className="mb-2 text-sm text-slate-300">Chart Type</p>
                             <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto pr-1 md:grid-cols-3">
-                                {chartTypeOptions.map((chartTypeOption) => (
-                                    <label
-                                        key={chartTypeOption.value}
-                                        className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 transition ${selectedChartType === chartTypeOption.value
-                                                ? "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
-                                                : "cursor-pointer border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
-                                            }`}
-                                    >
-                                        <input
-                                            type="radio"
-                                            value={chartTypeOption.value}
-                                            checked={selectedChartType === chartTypeOption.value}
-                                            onChange={() =>
-                                                setSelectedChartType(chartTypeOption.value as ChartType)
-                                            }
-                                            className="hidden"
-                                        />
-                                        {chartTypeOption.label}
-                                    </label>
-                                ))}
+                                {chartTypeOptions.map((chartTypeOption) => {
+                                    const isSelected =
+                                        selectedChartType === chartTypeOption.value;
+                                    const isCompatible = compatibleChartTypes.has(
+                                        chartTypeOption.value,
+                                    );
+
+                                    return (
+                                        <label
+                                            key={chartTypeOption.value}
+                                            className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center transition ${isSelected
+                                                    ? isCompatible
+                                                        ? "border-emerald-300/50 bg-emerald-500/15 text-emerald-100 shadow-[0_0_0_1px_rgba(110,231,183,0.2)]"
+                                                        : "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
+                                                    : isCompatible
+                                                        ? "cursor-pointer border-emerald-400/35 bg-emerald-500/8 text-emerald-100 hover:bg-emerald-500/14"
+                                                        : "cursor-pointer border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
+                                                }`}
+                                        >
+                                            <input
+                                                type="radio"
+                                                value={chartTypeOption.value}
+                                                checked={isSelected}
+                                                onChange={() =>
+                                                    setSelectedChartType(
+                                                        chartTypeOption.value as ChartType,
+                                                    )
+                                                }
+                                                className="hidden"
+                                            />
+                                            <span>{chartTypeOption.label}</span>
+                                            {isCompatible ? (
+                                                <span className="rounded-full border border-emerald-300/35 bg-emerald-500/12 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100">
+                                                    Match
+                                                </span>
+                                            ) : null}
+                                        </label>
+                                    );
+                                })}
                             </div>
                             <p className="mt-2 text-xs text-slate-400">
-                                Showing all ECharts chart types.
+                                {selectedQueryId
+                                    ? loadingQueryPreview
+                                        ? "Inspecting query result format..."
+                                        : compatibleChartTypes.size > 0
+                                            ? "Chart types marked 'Match' fit the selected query result."
+                                            : "No direct chart match found for this query result yet."
+                                    : "Select a query to highlight matching chart types."}
                             </p>
                         </div>
 
@@ -1569,6 +1810,24 @@ export default function PopulationDashboard() {
                                     {selectedChartGuide.minimumFields}
                                 </span>
                             </p>
+
+                            {selectedQueryShape ? (
+                                <p className="mt-3 text-xs text-slate-300">
+                                    Selected query shape:{" "}
+                                    <span className="font-semibold text-slate-100">
+                                        {selectedQueryShape.fieldCount} fields
+                                    </span>
+                                    ,{" "}
+                                    <span className="font-semibold text-slate-100">
+                                        {selectedQueryShape.numericFieldCount} numeric
+                                    </span>
+                                    ,{" "}
+                                    <span className="font-semibold text-slate-100">
+                                        {selectedQueryShape.categoryFieldCount} categorical
+                                    </span>
+                                    {selectedQueryShape.hasRows ? "" : " (no rows returned)"}
+                                </p>
+                            ) : null}
 
                             <div className="mt-3 text-xs text-slate-300">
                                 <p className="font-medium text-slate-200">Required</p>
