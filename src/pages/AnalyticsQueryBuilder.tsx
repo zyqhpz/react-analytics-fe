@@ -26,6 +26,7 @@ import { IoArrowBack } from "react-icons/io5";
 import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { format as formatSqlString } from "sql-formatter";
 
 import type { GetSchemasResponse } from "@/api/queries";
 import type {
@@ -143,6 +144,31 @@ export default function App() {
 
     const parsedLimit =
         limit.trim() && Number(limit) > 0 ? Math.floor(Number(limit)) : undefined;
+
+    const handleFormatSql = () => {
+        if (!sqlQuery.trim()) {
+            toast.error("Enter SQL before formatting.");
+            return;
+        }
+
+        try {
+            setSqlQuery(
+                formatSqlString(sqlQuery, {
+                    language: "sql",
+                    tabWidth: 2,
+                    keywordCase: "upper",
+                    linesBetweenQueries: 1,
+                }),
+            );
+        } catch (error) {
+            toast.error("Unable to format SQL.", {
+                description:
+                    error instanceof Error
+                        ? error.message
+                        : "Please check the SQL syntax.",
+            });
+        }
+    };
 
     const parseVisualConfig = (
         value: Query["visual_config"],
@@ -1501,11 +1527,21 @@ export default function App() {
                         <CardTitle>Raw SQL</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3">
+                        <div className="flex justify-end">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleFormatSql}
+                                className="cursor-pointer"
+                            >
+                                Format
+                            </Button>
+                        </div>
                         <textarea
                             value={sqlQuery}
                             onChange={(e) => setSqlQuery(e.target.value)}
                             placeholder="SELECT * FROM your_table LIMIT 100;"
-                            className="min-h-[320px] w-full rounded-md border px-3 py-2 font-mono text-sm"
+                            className="min-h-80 w-full rounded-md border px-3 py-2 font-mono text-sm"
                         />
                         <p className="text-sm text-muted-foreground">
                             Testing uses `POST /query/test/sql` with an `sql` payload, and
