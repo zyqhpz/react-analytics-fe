@@ -2,6 +2,7 @@ export type QueryValue = string | number | boolean | null | undefined;
 export type QueryRow = Record<string, QueryValue>;
 
 export type ChartType = string;
+export type QueryType = "visual" | "sql";
 
 export interface Query {
     id: string;
@@ -9,7 +10,9 @@ export interface Query {
     name: string;
     description: string;
     result_schema: string[];
-    visual_config: string;
+    query_type?: QueryType;
+    visual_config?: VisualQueryRequest | null;
+    sql_text?: string | null;
 }
 
 export type Aggregation = {

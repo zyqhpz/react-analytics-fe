@@ -19,8 +19,8 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { type Query } from "@/types/query";
-import { useEffect, useState } from "react";
+import { type Query, type QueryType } from "@/types/query";
+import { useEffect, useState, type MouseEvent } from "react";
 import { FaCheckCircle } from "react-icons/fa";
 import { IoArrowBack } from "react-icons/io5";
 import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
@@ -30,6 +30,7 @@ import { toast } from "sonner";
 import type { GetSchemasResponse } from "@/api/queries";
 import type {
     Aggregation,
+    ColumnSchema,
     FullSchema,
     Join,
     OrderBy,
@@ -74,6 +75,8 @@ export default function App() {
 
     const [savedQueries, setSavedQueries] = useState<Query[]>([]);
     const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null);
+    const [queryType, setQueryType] = useState<QueryType>("visual");
+    const [sqlQuery, setSqlQuery] = useState("");
 
     const [queryName, setQueryName] = useState("");
     const [queryDescription, setQueryDescription] = useState("");
@@ -141,39 +144,120 @@ export default function App() {
     const parsedLimit =
         limit.trim() && Number(limit) > 0 ? Math.floor(Number(limit)) : undefined;
 
+    const parseVisualConfig = (
+        value: Query["visual_config"],
+    ): VisualQueryRequest | null => {
+        if (!value) return null;
+
+        const parsedValue =
+            typeof value === "string" ? (JSON.parse(value) as unknown) : value;
+
+        return isVisualQueryRequest(parsedValue) ? parsedValue : null;
+    };
+
+    const isVisualQueryRequest = (value: unknown): value is VisualQueryRequest =>
+        typeof value === "object" && value !== null && "table" in value;
+
+    const emptyRuleGroup: RuleGroupType = {
+        combinator: "and",
+        rules: [],
+    };
+
+    const toRuleGroup = (value: unknown): RuleGroupType => {
+        if (
+            typeof value === "object" &&
+            value !== null &&
+            "combinator" in value &&
+            "rules" in value
+        ) {
+            return value as RuleGroupType;
+        }
+
+        return emptyRuleGroup;
+    };
+
+    const getSqlFromQuery = (savedQuery: Query) =>
+        savedQuery.sql_text?.trim() || "";
+
+    const resetVisualBuilderState = () => {
+        setJoins([]);
+        setSelectedColumns([]);
+        setAggregations([]);
+        setGroupBy([]);
+        setGroupByDateField("");
+        setAggregationFunc("");
+        setAggregationField("");
+        setAggregationAliasInput("");
+        setPivotEnabled(false);
+        setPivotField("");
+        setPivotValueField("");
+        setPivotFunc("");
+        setPivotValues([]);
+        setPivotValueType("string");
+        setPivotValueInput("");
+        setPivotAliasInput("");
+        setFillMissingDates(false);
+        setLimit("");
+        setOrderBy([]);
+        setQuery(emptyRuleGroup);
+        setHaving(emptyRuleGroup);
+    };
+
+    const getVisualPayload = (): VisualQueryRequest => {
+        const pivot = buildPivotOptions();
+
+        return {
+            table,
+            joins,
+            select: effectiveSelectColumns,
+            aggregations,
+            group_by: groupBy,
+            ...(fillMissingDates ? { fill_missing_dates: true } : {}),
+            ...(pivot ? { pivot } : {}),
+            where: query,
+            having,
+            order_by: orderBy,
+            ...(parsedLimit ? { limit: parsedLimit } : {}),
+        };
+    };
+
     const getAllColumnsWithMeta = () => {
         if (!schema || !tableSchema) return [];
 
         const seen = new Set<string>();
         const columns: { name: string; label: string; type?: string }[] = [];
 
-        Object.entries(tableSchema.columns).forEach(([name, columnSchema]) => {
-            if (!seen.has(name)) {
-                seen.add(name);
-                columns.push({
-                    name,
-                    label: name,
-                    type: columnSchema.type,
-                });
-            }
-        });
+        Object.entries(tableSchema.columns).forEach(
+            ([name, columnSchema]: [string, ColumnSchema]) => {
+                if (!seen.has(name)) {
+                    seen.add(name);
+                    columns.push({
+                        name,
+                        label: name,
+                        type: columnSchema.type,
+                    });
+                }
+            },
+        );
 
         joins.forEach((join) => {
             const joinSchema = schema.tables[join.table];
             if (!joinSchema) return;
 
-            Object.entries(joinSchema.columns).forEach(([name, columnSchema]) => {
-                const qualified = `${join.table}.${name}`;
+            Object.entries(joinSchema.columns).forEach(
+                ([name, columnSchema]: [string, ColumnSchema]) => {
+                    const qualified = `${join.table}.${name}`;
 
-                if (!seen.has(qualified)) {
-                    seen.add(qualified);
-                    columns.push({
-                        name: qualified,
-                        label: qualified,
-                        type: columnSchema.type,
-                    });
-                }
-            });
+                    if (!seen.has(qualified)) {
+                        seen.add(qualified);
+                        columns.push({
+                            name: qualified,
+                            label: qualified,
+                            type: columnSchema.type,
+                        });
+                    }
+                },
+            );
         });
 
         return columns;
@@ -232,40 +316,49 @@ export default function App() {
 
     // LOAD QUERY INTO BUILDER
     const loadQuery = (query: Query) => {
-        // const config = JSON.parse(query.visual_config);
-        const config =
-            typeof query.visual_config === "string"
-                ? JSON.parse(query.visual_config)
-                : query.visual_config;
+        const nextQueryType = query.query_type || "visual";
+        setQueryType(nextQueryType);
 
-        setTable(config.table || "");
-        setJoins(config.joins || []);
-        setSelectedColumns(config.select || []);
-        setAggregations(
-            (config.aggregations || []).map((agg: Aggregation) => ({
-                ...agg,
-                alias: agg.alias || "",
-            })),
-        );
-        setGroupBy(config.group_by || []);
-        setGroupByDateField("");
-        setAggregationFunc("");
-        setAggregationField("");
-        setAggregationAliasInput("");
-        const pivot = config.pivot as PivotOptions | undefined;
-        setPivotEnabled(Boolean(pivot?.enabled));
-        setPivotField(pivot?.pivot_field || "");
-        setPivotValueField(pivot?.value_field || "");
-        setPivotFunc(pivot?.func || "");
-        setPivotValues(pivot?.values || []);
-        setPivotValueType("string");
-        setPivotValueInput("");
-        setPivotAliasInput("");
-        setFillMissingDates(Boolean(config.fill_missing_dates));
-        setLimit(config.limit ? String(config.limit) : "");
-        setOrderBy(config.order_by || []);
-        setQuery(config.where || { combinator: "and", rules: [] });
-        setHaving(config.having || { combinator: "and", rules: [] });
+        if (nextQueryType === "sql") {
+            resetVisualBuilderState();
+            setSqlQuery(getSqlFromQuery(query));
+        } else {
+            const config = parseVisualConfig(query.visual_config);
+
+            if (config) {
+                setTable(config.table || "");
+                setJoins(config.joins || []);
+                setSelectedColumns(config.select || []);
+                setAggregations(
+                    (config.aggregations || []).map((agg: Aggregation) => ({
+                        ...agg,
+                        alias: agg.alias || "",
+                    })),
+                );
+                setGroupBy(config.group_by || []);
+                setGroupByDateField("");
+                setAggregationFunc("");
+                setAggregationField("");
+                setAggregationAliasInput("");
+                const pivot = config.pivot as PivotOptions | undefined;
+                setPivotEnabled(Boolean(pivot?.enabled));
+                setPivotField(pivot?.pivot_field || "");
+                setPivotValueField(pivot?.value_field || "");
+                setPivotFunc(pivot?.func || "");
+                setPivotValues(pivot?.values || []);
+                setPivotValueType("string");
+                setPivotValueInput("");
+                setPivotAliasInput("");
+                setFillMissingDates(Boolean(config.fill_missing_dates));
+                setLimit(config.limit ? String(config.limit) : "");
+                setOrderBy(config.order_by || []);
+                setQuery(toRuleGroup(config.where));
+                setHaving(toRuleGroup(config.having));
+            }
+
+            setSqlQuery("");
+        }
+
         setQueryName(query.name || "");
         setQueryDescription(query.description || "");
 
@@ -276,6 +369,8 @@ export default function App() {
     // DESELECT QUERY
     const deselectQuery = () => {
         setSelectedQueryId(null);
+        setQueryType("visual");
+        setSqlQuery("");
         setQueryName("");
         setQueryDescription("");
         setGroupByDateField("");
@@ -442,31 +537,25 @@ export default function App() {
     };
 
     const runQuery = async () => {
-        if (!validatePivotOptions()) return;
+        if (queryType === "visual" && !validatePivotOptions()) return;
+        if (queryType === "sql" && !sqlQuery.trim()) {
+            toast.error("SQL query is required before testing.");
+            return;
+        }
 
-        const pivot = buildPivotOptions();
-
-        const payload: VisualQueryRequest = {
-            table,
-            joins,
-            select: effectiveSelectColumns,
-            aggregations,
-            group_by: groupBy,
-            ...(fillMissingDates ? { fill_missing_dates: true } : {}),
-            ...(pivot ? { pivot } : {}),
-            where: query,
-            having,
-            order_by: orderBy,
-            ...(parsedLimit ? { limit: parsedLimit } : {}),
-        };
+        const payload =
+            queryType === "visual" ? getVisualPayload() : { sql: sqlQuery.trim() };
 
         console.log("Payload:", payload);
 
-        const res = await fetch("http://localhost:8080/api/v1/query/test", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify(payload),
-        });
+        const res = await fetch(
+            `http://localhost:8080/api/v1/query/test/${queryType}`,
+            {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify(payload),
+            },
+        );
 
         const data = await res.json();
 
@@ -495,6 +584,8 @@ export default function App() {
     useEffect(() => {
         setTestSuccess(false);
     }, [
+        queryType,
+        sqlQuery,
         table,
         joins,
         selectedColumns,
@@ -513,28 +604,19 @@ export default function App() {
     ]);
 
     const saveQuery = async () => {
-        if (!validatePivotOptions()) return;
+        if (queryType === "visual" && !validatePivotOptions()) return;
+        if (queryType === "sql" && !sqlQuery.trim()) {
+            toast.error("SQL query is required before saving.");
+            return;
+        }
 
-        const pivot = buildPivotOptions();
-
-        const config: VisualQueryRequest = {
-            table,
-            joins,
-            select: effectiveSelectColumns,
-            aggregations,
-            group_by: groupBy,
-            ...(fillMissingDates ? { fill_missing_dates: true } : {}),
-            ...(pivot ? { pivot } : {}),
-            where: query,
-            having,
-            order_by: orderBy,
-            ...(parsedLimit ? { limit: parsedLimit } : {}),
-        };
+        const config =
+            queryType === "visual" ? getVisualPayload() : { sql: sqlQuery.trim() };
 
         const payload = {
             name: queryName,
             description: queryDescription,
-            query_type: "visual",
+            query_type: queryType,
             config,
         };
 
@@ -663,7 +745,7 @@ export default function App() {
                 <CardContent className="flex gap-3">
                     <Select
                         value={selectedQueryId || ""}
-                        onValueChange={(value) => {
+                        onValueChange={(value: string) => {
                             setSelectedQueryId(value);
                             const selected = savedQueries.find((q) => q.id === value);
                             if (selected) loadQuery(selected);
@@ -706,704 +788,732 @@ export default function App() {
                 </CardContent>
             </Card>
 
-            {/* TABLE SELECT */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Select Table</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <Select
-                        value={table}
-                        onValueChange={(value) => {
-                            setTable(value);
-                            setJoins([]);
-                            setSelectedColumns([]);
-                            setAggregations([]);
-                            setGroupBy([]);
-                            setGroupByDateField("");
-                            setAggregationFunc("");
-                            setAggregationField("");
-                            setAggregationAliasInput("");
-                            setPivotEnabled(false);
-                            setPivotField("");
-                            setPivotValueField("");
-                            setPivotFunc("");
-                            setPivotValues([]);
-                            setPivotValueType("string");
-                            setPivotValueInput("");
-                            setPivotAliasInput("");
-                            setLimit("");
-                            setOrderBy([]);
-                            setQuery({ combinator: "and", rules: [] });
-                            setHaving({ combinator: "and", rules: [] });
-                        }}
-                    >
-                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
-                            <SelectValue placeholder="Select table" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {Object.keys(schema.tables)
-                                .filter(hasSelectValue)
-                                .map((t) => (
-                                    <SelectItem key={t} value={t}>
-                                        {t}
-                                    </SelectItem>
-                                ))}
-                        </SelectContent>
-                    </Select>
-                </CardContent>
-            </Card>
+            <div className="flex flex-wrap gap-3">
+                <Button
+                    variant={queryType === "visual" ? "default" : "outline"}
+                    className="cursor-pointer"
+                    onClick={() => setQueryType("visual")}
+                >
+                    Visual Query Builder
+                </Button>
+                <Button
+                    variant={queryType === "sql" ? "default" : "outline"}
+                    className="cursor-pointer"
+                    onClick={() => setQueryType("sql")}
+                >
+                    Raw SQL
+                </Button>
+            </div>
 
-            {/* JOINS */}
-            {tableSchema.relations && (
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Join Tables</CardTitle>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap gap-3">
-                        {Object.keys(tableSchema.relations).map((jt) => {
-                            const active = joins.some((j) => j.table === jt);
+            {queryType === "visual" ? (
+                <>
+                    {/* TABLE SELECT */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Select Table</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <Select
+                                value={table}
+                                onValueChange={(value: string) => {
+                                    setTable(value);
+                                    resetVisualBuilderState();
+                                }}
+                            >
+                                <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                    <SelectValue placeholder="Select table" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {Object.keys(schema.tables)
+                                        .filter(hasSelectValue)
+                                        .map((t) => (
+                                            <SelectItem key={t} value={t}>
+                                                {t}
+                                            </SelectItem>
+                                        ))}
+                                </SelectContent>
+                            </Select>
+                        </CardContent>
+                    </Card>
 
-                            return (
-                                <Button
-                                    key={jt}
-                                    variant="secondary"
-                                    onClick={() => toggleJoin(jt)}
-                                    className={`
+                    {/* JOINS */}
+                    {tableSchema.relations && (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Join Tables</CardTitle>
+                            </CardHeader>
+                            <CardContent className="flex flex-wrap gap-3">
+                                {Object.keys(tableSchema.relations).map((jt) => {
+                                    const active = joins.some((j) => j.table === jt);
+
+                                    return (
+                                        <Button
+                                            key={jt}
+                                            variant="secondary"
+                                            onClick={() => toggleJoin(jt)}
+                                            className={`
                     cursor-pointer transition-all
                     hover:scale-105
                     active:scale-95
                     ${active
-                                            ? "bg-gray-600 hover:bg-gray-700 text-white border-gray-700"
-                                            : "hover:bg-muted"
-                                        }
+                                                    ? "bg-gray-600 hover:bg-gray-700 text-white border-gray-700"
+                                                    : "hover:bg-muted"
+                                                }
                   `}
-                                >
-                                    {active ? "Unjoin" : "Join"} {jt}
-                                </Button>
-                            );
-                        })}
-                    </CardContent>
-                </Card>
-            )}
+                                        >
+                                            {active ? "Unjoin" : "Join"} {jt}
+                                        </Button>
+                                    );
+                                })}
+                            </CardContent>
+                        </Card>
+                    )}
 
-            {/* SELECT COLUMNS */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Select Columns</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {getAllColumns().map((col) => {
-                            const active = selectedColumns.includes(col.name);
-                            return (
-                                <div
-                                    key={col.name}
-                                    className={`
+                    {/* SELECT COLUMNS */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Select Columns</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {getAllColumns().map((col) => {
+                                    const active = selectedColumns.includes(col.name);
+                                    return (
+                                        <div
+                                            key={col.name}
+                                            className={`
                     flex items-center space-x-2 rounded-lg border p-3
                     cursor-pointer transition-all
                     hover:shadow-sm hover:border-primary/40
                     ${active ? "bg-primary/5 border-primary/40" : "bg-background"}
                   `}
-                                    onClick={() => toggleColumn(col.name)}
-                                >
-                                    <Checkbox
-                                        checked={active}
-                                        onCheckedChange={() => toggleColumn(col.name)}
-                                        onClick={(e) => e.stopPropagation()}
-                                    />
-                                    <label className="text-sm truncate cursor-pointer">
-                                        {col.label}
-                                    </label>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </CardContent>
-            </Card>
+                                            onClick={() => toggleColumn(col.name)}
+                                        >
+                                            <Checkbox
+                                                checked={active}
+                                                onCheckedChange={() => toggleColumn(col.name)}
+                                                onClick={(e: MouseEvent) => e.stopPropagation()}
+                                            />
+                                            <label className="text-sm truncate cursor-pointer">
+                                                {col.label}
+                                            </label>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </CardContent>
+                    </Card>
 
-            {/* GROUP BY */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Group By</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                        {getAllColumns().map((col) => {
-                            const active = groupBy.includes(col.name);
-                            return (
-                                <div
-                                    key={col.name}
-                                    className={`
+                    {/* GROUP BY */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Group By</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+                                {getAllColumns().map((col) => {
+                                    const active = groupBy.includes(col.name);
+                                    return (
+                                        <div
+                                            key={col.name}
+                                            className={`
                     flex items-center space-x-2 rounded-lg border p-3
                     cursor-pointer transition-all
                     hover:shadow-sm hover:border-primary/40
                     ${active
-                                            ? "bg-primary/5 border-primary/40"
-                                            : "bg-background"
-                                        }
+                                                    ? "bg-primary/5 border-primary/40"
+                                                    : "bg-background"
+                                                }
                   `}
-                                    onClick={() => toggleGroupBy(col.name)}
-                                >
-                                    <Checkbox
-                                        checked={active}
-                                        onCheckedChange={() => toggleGroupBy(col.name)}
-                                        onClick={(e) => e.stopPropagation()}
-                                    />
-                                    <label className="text-sm truncate cursor-pointer">
-                                        {col.label}
-                                    </label>
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3 mb-4">
-                        <Select
-                            value={groupByDateField}
-                            onValueChange={setGroupByDateField}
-                        >
-                            <SelectTrigger className="w-72 cursor-pointer hover:border-primary/40 transition">
-                                <SelectValue placeholder="Datetime field for DATE(...)" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {dateColumns.map((col) => (
-                                    <SelectItem key={col.name} value={col.name}>
-                                        {col.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-
-                        <Button
-                            variant="secondary"
-                            onClick={() => {
-                                if (!groupByDateField) return;
-
-                                const expression = `DATE(${groupByDateField})`;
-                                setGroupBy((prev) =>
-                                    prev.includes(expression) ? prev : [...prev, expression],
-                                );
-
-                                const joinTable = getJoinTableFromField(groupByDateField);
-                                if (joinTable) {
-                                    setJoins((prevJoins) => {
-                                        if (prevJoins.some((j) => j.table === joinTable)) {
-                                            return prevJoins;
-                                        }
-                                        return [...prevJoins, { table: joinTable }];
-                                    });
-                                }
-                            }}
-                            disabled={!groupByDateField || dateColumns.length === 0}
-                        >
-                            Add Date Group
-                        </Button>
-                    </div>
-
-                    {groupBy.length > 0 && (
-                        <div className="space-y-2">
-                            {groupBy.map((item, index) => (
-                                <div
-                                    key={index}
-                                    className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
-                                >
-                                    <span>{item}</span>
-                                    <Button
-                                        variant="destructive"
-                                        size="sm"
-                                        onClick={() =>
-                                            setGroupBy((prev) => prev.filter((_, i) => i !== index))
-                                        }
-                                    >
-                                        Remove
-                                    </Button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
-
-            {/* AGGREGATIONS */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Aggregations</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex gap-4">
-                        <select
-                            value={aggregationFunc}
-                            onChange={(e) => setAggregationFunc(e.target.value)}
-                            className="border rounded px-3 py-2 cursor-pointer hover:border-primary/40 transition"
-                        >
-                            <option value="">Function</option>
-                            <option value="SUM">SUM</option>
-                            <option value="COUNT">COUNT</option>
-                            <option value="AVG">AVG</option>
-                            <option value="MIN">MIN</option>
-                            <option value="MAX">MAX</option>
-                        </select>
-
-                        <select
-                            value={aggregationField}
-                            onChange={(e) => setAggregationField(e.target.value)}
-                            className="border rounded px-3 py-2 cursor-pointer hover:border-primary/40 transition"
-                        >
-                            <option value="">Field</option>
-                            {getAllColumns().map((col) => (
-                                <option key={col.name} value={col.name}>
-                                    {col.label}
-                                </option>
-                            ))}
-                        </select>
-
-                        <input
-                            type="text"
-                            value={aggregationAliasInput}
-                            onChange={(e) => setAggregationAliasInput(e.target.value)}
-                            className="border rounded px-3 py-2"
-                            placeholder={
-                                aggregationFunc && aggregationField
-                                    ? `Alias (default: ${getDefaultAggregationAlias({
-                                        func: aggregationFunc,
-                                        field: aggregationField,
-                                    })})`
-                                    : "Alias"
-                            }
-                        />
-
-                        <Button
-                            onClick={() => {
-                                const func = aggregationFunc;
-                                const field = aggregationField;
-                                if (!func || !field) return;
-                                setAggregations((prev) => [
-                                    ...prev,
-                                    {
-                                        func,
-                                        field,
-                                        alias: aggregationAliasInput.trim(),
-                                    },
-                                ]);
-                                setAggregationFunc("");
-                                setAggregationField("");
-                                setAggregationAliasInput("");
-                            }}
-                        >
-                            Add
-                        </Button>
-                    </div>
-
-                    {aggregations.map((agg, index) => {
-                        const alias = getAggregationAlias(agg);
-                        return (
-                            <div
-                                key={index}
-                                className="flex items-center gap-3 border rounded p-3 transition hover:bg-muted/40"
-                            >
-                                <span className="min-w-0 shrink-0 text-sm">
-                                    {agg.func}({agg.field}) AS
-                                </span>
-                                <input
-                                    type="text"
-                                    value={agg.alias || ""}
-                                    onChange={(e) =>
-                                        setAggregations((prev) =>
-                                            prev.map((item, itemIndex) =>
-                                                itemIndex === index
-                                                    ? { ...item, alias: e.target.value }
-                                                    : item,
-                                            ),
-                                        )
-                                    }
-                                    className="flex-1 border rounded px-3 py-2"
-                                    placeholder={getDefaultAggregationAlias(agg)}
-                                />
-                                <span className="text-xs text-muted-foreground shrink-0">
-                                    Result: {alias}
-                                </span>
-                                <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={() =>
-                                        setAggregations((prev) =>
-                                            prev.filter((_, i) => i !== index),
-                                        )
-                                    }
-                                >
-                                    Remove
-                                </Button>
-                            </div>
-                        );
-                    })}
-                </CardContent>
-            </Card>
-
-            {/* PIVOT */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Pivot</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex items-center gap-3">
-                        <Checkbox
-                            checked={pivotEnabled}
-                            onCheckedChange={(checked) => setPivotEnabled(Boolean(checked))}
-                        />
-                        <label className="text-sm font-medium cursor-pointer">
-                            Enable pivot output
-                        </label>
-                    </div>
-
-                    {pivotEnabled && (
-                        <>
-                            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                                <div className="space-y-2">
-                                    <p className="text-sm font-medium">Pivot field</p>
-                                    <Select value={pivotField} onValueChange={setPivotField}>
-                                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
-                                            <SelectValue placeholder="Select pivot field" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {getAllColumns().map((col) => (
-                                                <SelectItem key={col.name} value={col.name}>
-                                                    {col.label}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <p className="text-sm font-medium">Value field</p>
-                                    <Select
-                                        value={pivotValueField}
-                                        onValueChange={setPivotValueField}
-                                    >
-                                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
-                                            <SelectValue placeholder="Select value field" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {getAllColumns().map((col) => (
-                                                <SelectItem key={col.name} value={col.name}>
-                                                    {col.label}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <p className="text-sm font-medium">Function</p>
-                                    <Select value={pivotFunc} onValueChange={setPivotFunc}>
-                                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
-                                            <SelectValue placeholder="Select function" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="SUM">SUM</SelectItem>
-                                            <SelectItem value="COUNT">COUNT</SelectItem>
-                                            <SelectItem value="AVG">AVG</SelectItem>
-                                            <SelectItem value="MIN">MIN</SelectItem>
-                                            <SelectItem value="MAX">MAX</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
+                                            onClick={() => toggleGroupBy(col.name)}
+                                        >
+                                            <Checkbox
+                                                checked={active}
+                                                onCheckedChange={() => toggleGroupBy(col.name)}
+                                                onClick={(e: MouseEvent) => e.stopPropagation()}
+                                            />
+                                            <label className="text-sm truncate cursor-pointer">
+                                                {col.label}
+                                            </label>
+                                        </div>
+                                    );
+                                })}
                             </div>
 
-                            <div className="space-y-3 rounded-lg border p-4">
-                                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                                    <Select
-                                        value={pivotValueType}
-                                        onValueChange={setPivotValueType}
-                                    >
-                                        <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
-                                            <SelectValue placeholder="Value type" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="string">String</SelectItem>
-                                            <SelectItem value="number">Number</SelectItem>
-                                            <SelectItem value="boolean">Boolean</SelectItem>
-                                            <SelectItem value="null">Null</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-
-                                    <input
-                                        type="text"
-                                        value={pivotValueInput}
-                                        onChange={(e) => setPivotValueInput(e.target.value)}
-                                        disabled={pivotValueType === "null"}
-                                        placeholder={
-                                            pivotValueType === "boolean"
-                                                ? "true or false"
-                                                : pivotValueType === "number"
-                                                    ? "Pivot value"
-                                                    : pivotValueType === "null"
-                                                        ? "No input needed for null"
-                                                        : "Pivot value"
-                                        }
-                                        className="border rounded px-3 py-2 md:col-span-2 disabled:bg-muted disabled:text-muted-foreground"
-                                    />
-
-                                    <input
-                                        type="text"
-                                        value={pivotAliasInput}
-                                        onChange={(e) => setPivotAliasInput(e.target.value)}
-                                        placeholder="Alias"
-                                        className="border rounded px-3 py-2"
-                                    />
-                                </div>
-
-                                <Button
-                                    onClick={() => {
-                                        const parsedValue = parsePivotValue();
-                                        const alias = pivotAliasInput.trim();
-
-                                        if (parsedValue === undefined || !alias) {
-                                            toast.error("Invalid pivot value.", {
-                                                description:
-                                                    "Provide a valid pivot value and alias before adding it.",
-                                            });
-                                            return;
-                                        }
-
-                                        setPivotValues((prev) => [
-                                            ...prev,
-                                            {
-                                                value: parsedValue,
-                                                alias,
-                                            },
-                                        ]);
-                                        setPivotValueType("string");
-                                        setPivotValueInput("");
-                                        setPivotAliasInput("");
-                                    }}
-                                    variant="secondary"
-                                >
-                                    Add Pivot Value
-                                </Button>
-
-                                {pivotValues.length > 0 && (
-                                    <div className="space-y-2">
-                                        {pivotValues.map((item, index) => (
-                                            <div
-                                                key={`${item.alias}-${index}`}
-                                                className="flex items-center justify-between gap-3 rounded border p-3 transition hover:bg-muted/40"
-                                            >
-                                                <span className="text-sm">
-                                                    Value: {stringifyPivotValue(item.value)} | Alias:{" "}
-                                                    {item.alias}
-                                                </span>
-                                                <Button
-                                                    variant="destructive"
-                                                    size="sm"
-                                                    onClick={() =>
-                                                        setPivotValues((prev) =>
-                                                            prev.filter((_, i) => i !== index),
-                                                        )
-                                                    }
-                                                >
-                                                    Remove
-                                                </Button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </>
-                    )}
-                </CardContent>
-            </Card>
-
-            {/* FILTERS */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Filters</CardTitle>
-                </CardHeader>
-
-                <CardContent>
-                    <div className="rounded-lg border bg-muted/30 p-4">
-                        <QueryBuilder
-                            fields={fields}
-                            query={query}
-                            onQueryChange={setQuery}
-                            controlClassnames={{
-                                queryBuilder: "space-y-4",
-                                ruleGroup:
-                                    "border-l-4 border-primary/40 pl-4 space-y-4 bg-muted/20 rounded-lg p-4",
-                                combinators: "border rounded-md px-2 py-1 cursor-pointer",
-                                addRule:
-                                    "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
-                                addGroup:
-                                    "bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md px-3 py-1 cursor-pointer transition",
-                                removeRule: "text-destructive hover:underline cursor-pointer",
-                                removeGroup: "text-destructive hover:underline cursor-pointer",
-                                fields:
-                                    "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
-                                operators:
-                                    "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
-                                value: "border rounded-md px-2 py-1",
-                            }}
-                        />
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* HAVING */}
-            {aggregations.length > 0 && (
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Having</CardTitle>
-                    </CardHeader>
-
-                    <CardContent>
-                        <div className="rounded-lg border bg-muted/30 p-4">
-                            <QueryBuilder
-                                fields={havingFields}
-                                query={having}
-                                onQueryChange={setHaving}
-                                controlClassnames={{
-                                    queryBuilder: "space-y-4",
-                                    ruleGroup:
-                                        "border-l-4 border-primary/40 pl-4 space-y-4 bg-muted/20 rounded-lg p-4",
-                                    combinators: "border rounded-md px-2 py-1 cursor-pointer",
-                                    addRule:
-                                        "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
-                                    addGroup:
-                                        "bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md px-3 py-1 cursor-pointer transition",
-                                    removeRule: "text-destructive hover:underline cursor-pointer",
-                                    removeGroup:
-                                        "text-destructive hover:underline cursor-pointer",
-                                    fields:
-                                        "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
-                                    operators:
-                                        "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
-                                    value: "border rounded-md px-2 py-1",
-                                }}
-                            />
-                        </div>
-                    </CardContent>
-                </Card>
-            )}
-
-            {/* ORDER BY */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Order By</CardTitle>
-                </CardHeader>
-
-                <CardContent className="space-y-4">
-                    <div className="flex gap-4">
-                        <Select
-                            onValueChange={(value) => {
-                                if (!value) return;
-
-                                setOrderBy((prev) => {
-                                    if (prev.some((o) => o.field === value)) return prev;
-                                    return [...prev, { field: value, direction: "ASC" }];
-                                });
-
-                                if (value.includes(".")) {
-                                    const [joinTable] = value.split(".");
-                                    setJoins((prev) => {
-                                        if (prev.some((j) => j.table === joinTable)) return prev;
-                                        return [...prev, { table: joinTable }];
-                                    });
-                                }
-                            }}
-                        >
-                            <SelectTrigger className="w-55 cursor-pointer hover:border-primary/40 transition">
-                                <SelectValue placeholder="Select field" />
-                            </SelectTrigger>
-
-                            <SelectContent>
-                                {orderFields.map((col) => (
-                                    <SelectItem key={col.name} value={col.name}>
-                                        {col.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-
-                    {orderBy.map((o, index) => (
-                        <div
-                            key={index}
-                            className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
-                        >
-                            <span>{o.field}</span>
-
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap items-center gap-3 mb-4">
                                 <Select
-                                    value={o.direction}
-                                    onValueChange={(dir) => {
-                                        setOrderBy((prev) =>
-                                            prev.map((item, i) =>
-                                                i === index ? { ...item, direction: dir } : item,
-                                            ),
-                                        );
-                                    }}
+                                    value={groupByDateField}
+                                    onValueChange={setGroupByDateField}
                                 >
-                                    <SelectTrigger className="w-25 cursor-pointer hover:border-primary/40 transition">
-                                        <SelectValue />
+                                    <SelectTrigger className="w-72 cursor-pointer hover:border-primary/40 transition">
+                                        <SelectValue placeholder="Datetime field for DATE(...)" />
                                     </SelectTrigger>
-
                                     <SelectContent>
-                                        <SelectItem value="ASC">ASC</SelectItem>
-                                        <SelectItem value="DESC">DESC</SelectItem>
+                                        {dateColumns.map((col) => (
+                                            <SelectItem key={col.name} value={col.name}>
+                                                {col.label}
+                                            </SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
 
                                 <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={() =>
-                                        setOrderBy((prev) => prev.filter((_, i) => i !== index))
-                                    }
+                                    variant="secondary"
+                                    onClick={() => {
+                                        if (!groupByDateField) return;
+
+                                        const expression = `DATE(${groupByDateField})`;
+                                        setGroupBy((prev) =>
+                                            prev.includes(expression) ? prev : [...prev, expression],
+                                        );
+
+                                        const joinTable = getJoinTableFromField(groupByDateField);
+                                        if (joinTable) {
+                                            setJoins((prevJoins) => {
+                                                if (prevJoins.some((j) => j.table === joinTable)) {
+                                                    return prevJoins;
+                                                }
+                                                return [...prevJoins, { table: joinTable }];
+                                            });
+                                        }
+                                    }}
+                                    disabled={!groupByDateField || dateColumns.length === 0}
                                 >
-                                    Remove
+                                    Add Date Group
                                 </Button>
                             </div>
-                        </div>
-                    ))}
-                </CardContent>
-            </Card>
 
-            {/* LIMIT */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Limit</CardTitle>
-                </CardHeader>
+                            {groupBy.length > 0 && (
+                                <div className="space-y-2">
+                                    {groupBy.map((item, index) => (
+                                        <div
+                                            key={index}
+                                            className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
+                                        >
+                                            <span>{item}</span>
+                                            <Button
+                                                variant="destructive"
+                                                size="sm"
+                                                onClick={() =>
+                                                    setGroupBy((prev) =>
+                                                        prev.filter((_, i) => i !== index),
+                                                    )
+                                                }
+                                            >
+                                                Remove
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
 
-                <CardContent className="space-y-2">
-                    <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={limit}
-                        onChange={(e) => setLimit(e.target.value)}
-                        placeholder="Optional row limit"
-                        className="w-full max-w-xs border rounded px-3 py-2"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                        Leave empty to fetch without a limit.
-                    </p>
-                    <label className="flex items-center gap-3 pt-2">
-                        <Checkbox
-                            checked={fillMissingDates}
-                            onCheckedChange={(checked) =>
-                                setFillMissingDates(Boolean(checked))
-                            }
-                        />
-                        <div>
-                            <p className="text-sm font-medium">Fill Missing Dates</p>
+                    {/* AGGREGATIONS */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Aggregations</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="flex gap-4">
+                                <select
+                                    value={aggregationFunc}
+                                    onChange={(e) => setAggregationFunc(e.target.value)}
+                                    className="border rounded px-3 py-2 cursor-pointer hover:border-primary/40 transition"
+                                >
+                                    <option value="">Function</option>
+                                    <option value="SUM">SUM</option>
+                                    <option value="COUNT">COUNT</option>
+                                    <option value="AVG">AVG</option>
+                                    <option value="MIN">MIN</option>
+                                    <option value="MAX">MAX</option>
+                                </select>
+
+                                <select
+                                    value={aggregationField}
+                                    onChange={(e) => setAggregationField(e.target.value)}
+                                    className="border rounded px-3 py-2 cursor-pointer hover:border-primary/40 transition"
+                                >
+                                    <option value="">Field</option>
+                                    {getAllColumns().map((col) => (
+                                        <option key={col.name} value={col.name}>
+                                            {col.label}
+                                        </option>
+                                    ))}
+                                </select>
+
+                                <input
+                                    type="text"
+                                    value={aggregationAliasInput}
+                                    onChange={(e) => setAggregationAliasInput(e.target.value)}
+                                    className="border rounded px-3 py-2"
+                                    placeholder={
+                                        aggregationFunc && aggregationField
+                                            ? `Alias (default: ${getDefaultAggregationAlias({
+                                                func: aggregationFunc,
+                                                field: aggregationField,
+                                            })})`
+                                            : "Alias"
+                                    }
+                                />
+
+                                <Button
+                                    onClick={() => {
+                                        const func = aggregationFunc;
+                                        const field = aggregationField;
+                                        if (!func || !field) return;
+                                        setAggregations((prev) => [
+                                            ...prev,
+                                            {
+                                                func,
+                                                field,
+                                                alias: aggregationAliasInput.trim(),
+                                            },
+                                        ]);
+                                        setAggregationFunc("");
+                                        setAggregationField("");
+                                        setAggregationAliasInput("");
+                                    }}
+                                >
+                                    Add
+                                </Button>
+                            </div>
+
+                            {aggregations.map((agg, index) => {
+                                const alias = getAggregationAlias(agg);
+                                return (
+                                    <div
+                                        key={index}
+                                        className="flex items-center gap-3 border rounded p-3 transition hover:bg-muted/40"
+                                    >
+                                        <span className="min-w-0 shrink-0 text-sm">
+                                            {agg.func}({agg.field}) AS
+                                        </span>
+                                        <input
+                                            type="text"
+                                            value={agg.alias || ""}
+                                            onChange={(e) =>
+                                                setAggregations((prev) =>
+                                                    prev.map((item, itemIndex) =>
+                                                        itemIndex === index
+                                                            ? { ...item, alias: e.target.value }
+                                                            : item,
+                                                    ),
+                                                )
+                                            }
+                                            className="flex-1 border rounded px-3 py-2"
+                                            placeholder={getDefaultAggregationAlias(agg)}
+                                        />
+                                        <span className="text-xs text-muted-foreground shrink-0">
+                                            Result: {alias}
+                                        </span>
+                                        <Button
+                                            variant="destructive"
+                                            size="sm"
+                                            onClick={() =>
+                                                setAggregations((prev) =>
+                                                    prev.filter((_, i) => i !== index),
+                                                )
+                                            }
+                                        >
+                                            Remove
+                                        </Button>
+                                    </div>
+                                );
+                            })}
+                        </CardContent>
+                    </Card>
+
+                    {/* PIVOT */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Pivot</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="flex items-center gap-3">
+                                <Checkbox
+                                    checked={pivotEnabled}
+                                    onCheckedChange={(checked: boolean | "indeterminate") =>
+                                        setPivotEnabled(Boolean(checked))
+                                    }
+                                />
+                                <label className="text-sm font-medium cursor-pointer">
+                                    Enable pivot output
+                                </label>
+                            </div>
+
+                            {pivotEnabled && (
+                                <>
+                                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                                        <div className="space-y-2">
+                                            <p className="text-sm font-medium">Pivot field</p>
+                                            <Select value={pivotField} onValueChange={setPivotField}>
+                                                <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                                    <SelectValue placeholder="Select pivot field" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {getAllColumns().map((col) => (
+                                                        <SelectItem key={col.name} value={col.name}>
+                                                            {col.label}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <p className="text-sm font-medium">Value field</p>
+                                            <Select
+                                                value={pivotValueField}
+                                                onValueChange={setPivotValueField}
+                                            >
+                                                <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                                    <SelectValue placeholder="Select value field" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {getAllColumns().map((col) => (
+                                                        <SelectItem key={col.name} value={col.name}>
+                                                            {col.label}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <p className="text-sm font-medium">Function</p>
+                                            <Select value={pivotFunc} onValueChange={setPivotFunc}>
+                                                <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                                    <SelectValue placeholder="Select function" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="SUM">SUM</SelectItem>
+                                                    <SelectItem value="COUNT">COUNT</SelectItem>
+                                                    <SelectItem value="AVG">AVG</SelectItem>
+                                                    <SelectItem value="MIN">MIN</SelectItem>
+                                                    <SelectItem value="MAX">MAX</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3 rounded-lg border p-4">
+                                        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                                            <Select
+                                                value={pivotValueType}
+                                                onValueChange={setPivotValueType}
+                                            >
+                                                <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                                    <SelectValue placeholder="Value type" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="string">String</SelectItem>
+                                                    <SelectItem value="number">Number</SelectItem>
+                                                    <SelectItem value="boolean">Boolean</SelectItem>
+                                                    <SelectItem value="null">Null</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+
+                                            <input
+                                                type="text"
+                                                value={pivotValueInput}
+                                                onChange={(e) => setPivotValueInput(e.target.value)}
+                                                disabled={pivotValueType === "null"}
+                                                placeholder={
+                                                    pivotValueType === "boolean"
+                                                        ? "true or false"
+                                                        : pivotValueType === "number"
+                                                            ? "Pivot value"
+                                                            : pivotValueType === "null"
+                                                                ? "No input needed for null"
+                                                                : "Pivot value"
+                                                }
+                                                className="border rounded px-3 py-2 md:col-span-2 disabled:bg-muted disabled:text-muted-foreground"
+                                            />
+
+                                            <input
+                                                type="text"
+                                                value={pivotAliasInput}
+                                                onChange={(e) => setPivotAliasInput(e.target.value)}
+                                                placeholder="Alias"
+                                                className="border rounded px-3 py-2"
+                                            />
+                                        </div>
+
+                                        <Button
+                                            onClick={() => {
+                                                const parsedValue = parsePivotValue();
+                                                const alias = pivotAliasInput.trim();
+
+                                                if (parsedValue === undefined || !alias) {
+                                                    toast.error("Invalid pivot value.", {
+                                                        description:
+                                                            "Provide a valid pivot value and alias before adding it.",
+                                                    });
+                                                    return;
+                                                }
+
+                                                setPivotValues((prev) => [
+                                                    ...prev,
+                                                    {
+                                                        value: parsedValue,
+                                                        alias,
+                                                    },
+                                                ]);
+                                                setPivotValueType("string");
+                                                setPivotValueInput("");
+                                                setPivotAliasInput("");
+                                            }}
+                                            variant="secondary"
+                                        >
+                                            Add Pivot Value
+                                        </Button>
+
+                                        {pivotValues.length > 0 && (
+                                            <div className="space-y-2">
+                                                {pivotValues.map((item, index) => (
+                                                    <div
+                                                        key={`${item.alias}-${index}`}
+                                                        className="flex items-center justify-between gap-3 rounded border p-3 transition hover:bg-muted/40"
+                                                    >
+                                                        <span className="text-sm">
+                                                            Value: {stringifyPivotValue(item.value)} | Alias:{" "}
+                                                            {item.alias}
+                                                        </span>
+                                                        <Button
+                                                            variant="destructive"
+                                                            size="sm"
+                                                            onClick={() =>
+                                                                setPivotValues((prev) =>
+                                                                    prev.filter((_, i) => i !== index),
+                                                                )
+                                                            }
+                                                        >
+                                                            Remove
+                                                        </Button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* FILTERS */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Filters</CardTitle>
+                        </CardHeader>
+
+                        <CardContent>
+                            <div className="rounded-lg border bg-muted/30 p-4">
+                                <QueryBuilder
+                                    fields={fields}
+                                    query={query}
+                                    onQueryChange={setQuery}
+                                    controlClassnames={{
+                                        queryBuilder: "space-y-4",
+                                        ruleGroup:
+                                            "border-l-4 border-primary/40 pl-4 space-y-4 bg-muted/20 rounded-lg p-4",
+                                        combinators: "border rounded-md px-2 py-1 cursor-pointer",
+                                        addRule:
+                                            "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
+                                        addGroup:
+                                            "bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md px-3 py-1 cursor-pointer transition",
+                                        removeRule:
+                                            "text-destructive hover:underline cursor-pointer",
+                                        removeGroup:
+                                            "text-destructive hover:underline cursor-pointer",
+                                        fields:
+                                            "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+                                        operators:
+                                            "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+                                        value: "border rounded-md px-2 py-1",
+                                    }}
+                                />
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* HAVING */}
+                    {aggregations.length > 0 && (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Having</CardTitle>
+                            </CardHeader>
+
+                            <CardContent>
+                                <div className="rounded-lg border bg-muted/30 p-4">
+                                    <QueryBuilder
+                                        fields={havingFields}
+                                        query={having}
+                                        onQueryChange={setHaving}
+                                        controlClassnames={{
+                                            queryBuilder: "space-y-4",
+                                            ruleGroup:
+                                                "border-l-4 border-primary/40 pl-4 space-y-4 bg-muted/20 rounded-lg p-4",
+                                            combinators: "border rounded-md px-2 py-1 cursor-pointer",
+                                            addRule:
+                                                "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
+                                            addGroup:
+                                                "bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md px-3 py-1 cursor-pointer transition",
+                                            removeRule:
+                                                "text-destructive hover:underline cursor-pointer",
+                                            removeGroup:
+                                                "text-destructive hover:underline cursor-pointer",
+                                            fields:
+                                                "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+                                            operators:
+                                                "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+                                            value: "border rounded-md px-2 py-1",
+                                        }}
+                                    />
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {/* ORDER BY */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Order By</CardTitle>
+                        </CardHeader>
+
+                        <CardContent className="space-y-4">
+                            <div className="flex gap-4">
+                                <Select
+                                    onValueChange={(value: string) => {
+                                        if (!value) return;
+
+                                        setOrderBy((prev) => {
+                                            if (prev.some((o) => o.field === value)) return prev;
+                                            return [...prev, { field: value, direction: "ASC" }];
+                                        });
+
+                                        if (value.includes(".")) {
+                                            const [joinTable] = value.split(".");
+                                            setJoins((prev) => {
+                                                if (prev.some((j) => j.table === joinTable))
+                                                    return prev;
+                                                return [...prev, { table: joinTable }];
+                                            });
+                                        }
+                                    }}
+                                >
+                                    <SelectTrigger className="w-55 cursor-pointer hover:border-primary/40 transition">
+                                        <SelectValue placeholder="Select field" />
+                                    </SelectTrigger>
+
+                                    <SelectContent>
+                                        {orderFields.map((col) => (
+                                            <SelectItem key={col.name} value={col.name}>
+                                                {col.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            {orderBy.map((o, index) => (
+                                <div
+                                    key={index}
+                                    className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
+                                >
+                                    <span>{o.field}</span>
+
+                                    <div className="flex gap-2">
+                                        <Select
+                                            value={o.direction}
+                                            onValueChange={(dir: string) => {
+                                                setOrderBy((prev) =>
+                                                    prev.map((item, i) =>
+                                                        i === index ? { ...item, direction: dir } : item,
+                                                    ),
+                                                );
+                                            }}
+                                        >
+                                            <SelectTrigger className="w-25 cursor-pointer hover:border-primary/40 transition">
+                                                <SelectValue />
+                                            </SelectTrigger>
+
+                                            <SelectContent>
+                                                <SelectItem value="ASC">ASC</SelectItem>
+                                                <SelectItem value="DESC">DESC</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+
+                                        <Button
+                                            variant="destructive"
+                                            size="sm"
+                                            onClick={() =>
+                                                setOrderBy((prev) => prev.filter((_, i) => i !== index))
+                                            }
+                                        >
+                                            Remove
+                                        </Button>
+                                    </div>
+                                </div>
+                            ))}
+                        </CardContent>
+                    </Card>
+
+                    {/* LIMIT */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Limit</CardTitle>
+                        </CardHeader>
+
+                        <CardContent className="space-y-2">
+                            <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={limit}
+                                onChange={(e) => setLimit(e.target.value)}
+                                placeholder="Optional row limit"
+                                className="w-full max-w-xs border rounded px-3 py-2"
+                            />
                             <p className="text-sm text-muted-foreground">
-                                Include empty dates with no data in test results.
+                                Leave empty to fetch without a limit.
                             </p>
-                        </div>
-                    </label>
-                </CardContent>
-            </Card>
+                            <label className="flex items-center gap-3 pt-2">
+                                <Checkbox
+                                    checked={fillMissingDates}
+                                    onCheckedChange={(checked: boolean | "indeterminate") =>
+                                        setFillMissingDates(Boolean(checked))
+                                    }
+                                />
+                                <div>
+                                    <p className="text-sm font-medium">Fill Missing Dates</p>
+                                    <p className="text-sm text-muted-foreground">
+                                        Include empty dates with no data in test results.
+                                    </p>
+                                </div>
+                            </label>
+                        </CardContent>
+                    </Card>
+                </>
+            ) : (
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Raw SQL</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        <textarea
+                            value={sqlQuery}
+                            onChange={(e) => setSqlQuery(e.target.value)}
+                            placeholder="SELECT * FROM your_table LIMIT 100;"
+                            className="min-h-[320px] w-full rounded-md border px-3 py-2 font-mono text-sm"
+                        />
+                        <p className="text-sm text-muted-foreground">
+                            Testing uses `POST /query/test/sql` with an `sql` payload, and
+                            saving uses `query_type = sql` with `config.sql`.
+                        </p>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* RUN QUERY */}
             <div className="flex items-center gap-3">
@@ -1412,7 +1522,7 @@ export default function App() {
                     onClick={runQuery}
                     className="cursor-pointer hover:scale-105 active:scale-95 transition"
                 >
-                    Run Query
+                    {queryType === "visual" ? "Run Visual Query" : "Run SQL"}
                 </Button>
 
                 {testSuccess && (
