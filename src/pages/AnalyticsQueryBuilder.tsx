@@ -899,15 +899,22 @@ export default function App() {
                                     resetVisualBuilderState();
                                 }}
                             >
-                                <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+                                <SelectTrigger className="min-h-14 cursor-pointer p-3 hover:border-primary/40 transition **:data-[slot=select-value]:items-start">
                                     <SelectValue placeholder="Select table" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {Object.keys(schema.tables)
-                                        .filter(hasSelectValue)
-                                        .map((t) => (
-                                            <SelectItem key={t} value={t}>
-                                                {t}
+                                    {Object.entries(schema.tables)
+                                        .filter(([name]) => hasSelectValue(name))
+                                        .map(([name, details]) => (
+                                            <SelectItem key={name} value={name}>
+                                                <div className="flex flex-col items-start">
+                                                    <span>{name}</span>
+                                                    {details.description ? (
+                                                        <span className="text-xs text-muted-foreground whitespace-normal">
+                                                            {details.description}
+                                                        </span>
+                                                    ) : null}
+                                                </div>
                                             </SelectItem>
                                         ))}
                                 </SelectContent>

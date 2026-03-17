@@ -55,6 +55,7 @@ export type ColumnSchema = {
 };
 
 export type TableSchema = {
+    description?: string;
     columns: Record<string, ColumnSchema>;
     relations?: Record<string, never>;
 };
