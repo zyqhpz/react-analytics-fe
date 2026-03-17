@@ -71,6 +71,17 @@ type QueryShapeSummary = {
     hasRows: boolean;
 };
 
+type ChartPreviewSummary = {
+    status: "ready" | "fallback" | "insufficient";
+    title: string;
+    note: string;
+    schemaFields: string[];
+    xAxisLabel?: string;
+    yAxisLabel?: string;
+    seriesLabels: string[];
+    sampleItems: string[];
+};
+
 const DASHBOARD_ID = "019c7377-64b0-75c7-93e3-8f2152715aa5";
 
 const formatCompactNumber = (value: unknown): string => {
@@ -261,6 +272,183 @@ const inferDataShape = (data: QueryRow[], schema?: string[]) => {
     const primaryValueKey = valueKeys[0] ?? keys[1] ?? keys[0];
 
     return { keys, numericKeys, valueKeys, categoryKey, primaryValueKey };
+};
+
+const inferPreviewShape = (data: QueryRow[], schema?: string[]) => {
+    const keys = getColumns(data, schema);
+    const hasRows = data.length > 0;
+    const sampledNumericKeys = keys.filter((key) =>
+        hasRows ? data.every((row) => toNumeric(row[key]) !== null) : false,
+    );
+    const guessedNumericKeys = keys.filter((key) =>
+        /(amount|total|count|value|rate|avg|sum|score|price|cost|revenue|open|close|low|high|min|max|median|q1|q3|qty|quantity|percent|percentage)/i.test(
+            key,
+        ),
+    );
+    const numericKeys = sampledNumericKeys.length
+        ? sampledNumericKeys
+        : guessedNumericKeys;
+    const categoryKeys = keys.filter((key) => !numericKeys.includes(key));
+    const categoryKey =
+        categoryKeys[0] ?? (keys.length > 1 ? keys[0] : undefined);
+    const valueKeys = numericKeys.length
+        ? numericKeys
+        : keys
+            .filter((key) => key !== categoryKey)
+            .slice(0, Math.max(keys.length - 1, 1));
+
+    return {
+        keys,
+        numericKeys,
+        categoryKeys,
+        categoryKey,
+        valueKeys,
+        hasRows,
+    };
+};
+
+const buildChartPreviewSummary = (
+    chartType: string,
+    data: QueryRow[] = [],
+    schema?: string[],
+): ChartPreviewSummary => {
+    const { keys, categoryKey, valueKeys } = inferPreviewShape(data, schema);
+    const fallbackValueKey = valueKeys[0] ?? keys[0];
+    const sampleItems = data.slice(0, 3).map((row, index) => {
+        const labelKey = categoryKey ?? keys[0];
+        const label = labelKey ? toLabel(row[labelKey]) : `Row ${index + 1}`;
+
+        if (chartType === "table") {
+            return `${label}: ${keys.map((key) => `${key}=${formatTableValue(row[key])}`).join(", ")}`;
+        }
+
+        if (chartType === "gauge") {
+            return `${fallbackValueKey}: ${formatTableValue(row[fallbackValueKey])}`;
+        }
+
+        if (chartType === "candlestick" || chartType === "boxplot") {
+            return `${label}: ${valueKeys
+                .slice(0, chartType === "candlestick" ? 4 : 5)
+                .map((key) => `${key}=${formatTableValue(row[key])}`)
+                .join(", ")}`;
+        }
+
+        return `${label}: ${valueKeys
+            .slice(
+                0,
+                chartType === "stackedArea" || chartType === "stackedBar" ? 3 : 2,
+            )
+            .map((key) => `${key}=${formatTableValue(row[key])}`)
+            .join(", ")}`;
+    });
+
+    if (!keys.length) {
+        return {
+            status: "insufficient",
+            title: "No preview available yet",
+            note: "Run or save a query with result fields so the chart can infer axes and series.",
+            schemaFields: [],
+            seriesLabels: [],
+            sampleItems: [],
+        };
+    }
+
+    if (chartType === "table") {
+        return {
+            status: "ready",
+            title: "Table preview",
+            note: "The widget will render the selected query as tabular rows using the returned schema order.",
+            schemaFields: keys,
+            seriesLabels: keys,
+            sampleItems,
+        };
+    }
+
+    if (chartType === "gauge") {
+        return {
+            status: fallbackValueKey ? "ready" : "insufficient",
+            title: "Gauge preview",
+            note: fallbackValueKey
+                ? "The first numeric-looking field is used as the gauge value."
+                : "Add at least one numeric field so the gauge has a value to display.",
+            schemaFields: keys,
+            seriesLabels: fallbackValueKey ? [fallbackValueKey] : [],
+            sampleItems,
+        };
+    }
+
+    if (chartType === "candlestick" || chartType === "boxplot") {
+        const requiredMetrics = chartType === "candlestick" ? 4 : 5;
+        const metricKeys = valueKeys.slice(0, requiredMetrics);
+        const isReady =
+            Boolean(categoryKey) && metricKeys.length === requiredMetrics;
+
+        return {
+            status: isReady ? "ready" : "insufficient",
+            title:
+                chartType === "candlestick" ? "OHLC preview" : "Distribution preview",
+            note: isReady
+                ? `${chartType === "candlestick" ? "Candlestick" : "Boxplot"} will use ${categoryKey} as the label field and ${metricKeys.join(", ")} as ordered metrics.`
+                : `This chart needs ${requiredMetrics} numeric fields plus one label field.`,
+            schemaFields: keys,
+            xAxisLabel: categoryKey,
+            yAxisLabel: metricKeys.join(", "),
+            seriesLabels: metricKeys,
+            sampleItems,
+        };
+    }
+
+    if (chartType === "pie" || chartType === "funnel") {
+        const primaryValueKey = valueKeys[0];
+        const isReady = Boolean(categoryKey && primaryValueKey);
+
+        return {
+            status: isReady ? "ready" : "insufficient",
+            title: chartType === "pie" ? "Segment preview" : "Stage preview",
+            note: isReady
+                ? `${categoryKey} becomes each ${chartType === "pie" ? "slice" : "stage"} and ${primaryValueKey} becomes the size/value.`
+                : "This chart needs one label field and one numeric value field.",
+            schemaFields: keys,
+            xAxisLabel: categoryKey,
+            yAxisLabel: primaryValueKey,
+            seriesLabels: primaryValueKey ? [primaryValueKey] : [],
+            sampleItems,
+        };
+    }
+
+    const multiSeriesTypes = new Set(["stackedArea", "stackedBar"]);
+    const specializedTypes = new Set([
+        "radar",
+        "heatmap",
+        "tree",
+        "treemap",
+        "sunburst",
+    ]);
+    const primarySeries = multiSeriesTypes.has(chartType)
+        ? valueKeys.slice(0, Math.max(valueKeys.length, 2))
+        : valueKeys.slice(0, Math.max(valueKeys.length, 1));
+    const hasCategoryAndValue = Boolean(categoryKey && primarySeries.length > 0);
+
+    return {
+        status: hasCategoryAndValue
+            ? specializedTypes.has(chartType)
+                ? "fallback"
+                : "ready"
+            : "insufficient",
+        title: specializedTypes.has(chartType)
+            ? "Schema preview with fallback mapping"
+            : "Axis preview",
+        note: hasCategoryAndValue
+            ? specializedTypes.has(chartType)
+                ? `${categoryKey} is the main label field and ${primarySeries.join(", ")} will seed the chart. Rendering may adapt or fall back depending on the final schema.`
+                : `${categoryKey} will map to the horizontal/category axis and ${primarySeries.join(", ")} will render as ${primarySeries.length > 1 ? "series" : "the value series"}.`
+            : "This chart needs at least one label field and one value field to infer the visual layout.",
+        schemaFields: keys,
+        xAxisLabel: categoryKey,
+        yAxisLabel: primarySeries.join(", "),
+        seriesLabels: primarySeries,
+        sampleItems,
+    };
 };
 
 const summarizeQueryShape = (
@@ -1011,6 +1199,15 @@ export default function PopulationDashboard() {
                 : null,
         [selectedQueryPreview],
     );
+    const selectedChartPreview = useMemo(
+        () =>
+            buildChartPreviewSummary(
+                String(selectedChartType),
+                selectedQueryPreview?.data ?? [],
+                selectedQueryPreview?.schema,
+            ),
+        [selectedChartType, selectedQueryPreview],
+    );
     const compatibleChartTypes = useMemo(
         () =>
             new Set(
@@ -1745,7 +1942,7 @@ export default function PopulationDashboard() {
 
                         <div className="mb-6">
                             <p className="mb-2 text-sm text-slate-300">Chart Type</p>
-                            <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto pr-1 md:grid-cols-3">
+                            <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
                                 {chartTypeOptions.map((chartTypeOption) => {
                                     const isSelected =
                                         selectedChartType === chartTypeOption.value;
@@ -1870,6 +2067,114 @@ export default function PopulationDashboard() {
                                     ))}
                                 </div>
                             ) : null}
+                        </div>
+
+                        <div className="mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4">
+                            <div className="mb-2 flex items-center justify-between gap-3">
+                                <p className="text-sm font-semibold text-slate-100">
+                                    Chart Preview
+                                </p>
+                                <span
+                                    className={`rounded-md px-2 py-1 text-xs ${selectedChartPreview.status === "ready"
+                                            ? "border border-emerald-300/30 bg-emerald-500/10 text-emerald-100"
+                                            : selectedChartPreview.status === "fallback"
+                                                ? "border border-amber-300/30 bg-amber-500/10 text-amber-100"
+                                                : "border border-white/15 bg-slate-900/70 text-slate-300"
+                                        }`}
+                                >
+                                    {selectedChartPreview.status === "ready"
+                                        ? "Ready"
+                                        : selectedChartPreview.status === "fallback"
+                                            ? "Adaptive"
+                                            : "Needs Fields"}
+                                </span>
+                            </div>
+
+                            <p className="text-xs font-medium text-slate-100">
+                                {selectedChartPreview.title}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-300">
+                                {selectedChartPreview.note}
+                            </p>
+
+                            {selectedChartPreview.schemaFields.length ? (
+                                <div className="mt-3">
+                                    <p className="text-xs font-medium text-slate-200">
+                                        Result schema
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                        {selectedChartPreview.schemaFields.map((field) => (
+                                            <span
+                                                key={field}
+                                                className="rounded-full border border-white/10 bg-slate-900/70 px-2.5 py-1 text-[11px] text-slate-200"
+                                            >
+                                                {field}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : null}
+
+                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                                <div className="rounded-lg border border-white/10 bg-slate-900/60 p-3">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                                        X Axis / Labels
+                                    </p>
+                                    <p className="mt-2 text-sm text-slate-100">
+                                        {selectedChartPreview.xAxisLabel ?? "Not inferred yet"}
+                                    </p>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-slate-900/60 p-3">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                                        Y Axis / Values
+                                    </p>
+                                    <p className="mt-2 text-sm text-slate-100">
+                                        {selectedChartPreview.yAxisLabel ?? "Not inferred yet"}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="mt-3">
+                                <p className="text-xs font-medium text-slate-200">Series</p>
+                                {selectedChartPreview.seriesLabels.length ? (
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                        {selectedChartPreview.seriesLabels.map((series) => (
+                                            <span
+                                                key={series}
+                                                className="rounded-full border border-cyan-300/20 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-100"
+                                            >
+                                                {series}
+                                            </span>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="mt-1 text-xs text-slate-400">
+                                        No series inferred yet.
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className="mt-3">
+                                <p className="text-xs font-medium text-slate-200">
+                                    Sample mapping
+                                </p>
+                                {selectedChartPreview.sampleItems.length ? (
+                                    <div className="mt-2 space-y-2">
+                                        {selectedChartPreview.sampleItems.map((item) => (
+                                            <div
+                                                key={item}
+                                                className="rounded-lg border border-white/10 bg-slate-900/60 px-3 py-2 text-xs text-slate-300"
+                                            >
+                                                {item}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="mt-1 text-xs text-slate-400">
+                                        Pick a query with rows to see example plotted values.
+                                    </p>
+                                )}
+                            </div>
                         </div>
 
                         <div className="flex justify-end gap-3">
