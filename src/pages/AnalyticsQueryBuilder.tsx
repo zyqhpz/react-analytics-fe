@@ -42,6 +42,32 @@ import type {
     VisualQueryRequest,
 } from "@/types/query";
 
+const getResultColumns = (data: QueryRow[] = []): string[] =>
+    Array.from(new Set(data.flatMap((row) => Object.keys(row))));
+
+const toCsvValue = (value: unknown): string => {
+    if (value === null || value === undefined) return "";
+    const stringValue = String(value);
+
+    if (/[",\r\n]/.test(stringValue)) {
+        return `"${stringValue.replaceAll('"', '""')}"`;
+    }
+
+    return stringValue;
+};
+
+const buildCsvContent = (data: QueryRow[] = []): string => {
+    const columns = getResultColumns(data);
+    if (!columns.length) return "";
+
+    const header = columns.map(toCsvValue).join(",");
+    const rows = data.map((row) =>
+        columns.map((column) => toCsvValue(row[column])).join(","),
+    );
+
+    return [header, ...rows].join("\r\n");
+};
+
 export default function App() {
     const [schema, setSchema] = useState<FullSchema | null>(null);
     const [table, setTable] = useState("");
@@ -605,6 +631,33 @@ export default function App() {
             });
             setResults([]);
         }
+    };
+
+    const exportResultsToCsv = () => {
+        const csv = buildCsvContent(results);
+
+        if (!csv) {
+            toast.error("No results available to export.");
+            return;
+        }
+
+        const blob = new Blob(["\uFEFF", csv], {
+            type: "text/csv;charset=utf-8;",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const safeName =
+            queryName
+                .trim()
+                .replace(/[^a-z0-9-_]+/gi, "_")
+                .replace(/^_+|_+$/g, "") || "query-results-" + new Date().getTime();
+
+        link.href = url;
+        link.download = `${safeName}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+
+        toast.success("Results exported to CSV.");
     };
 
     useEffect(() => {
@@ -1604,8 +1657,16 @@ export default function App() {
             {/* RESULTS */}
             {results.length > 0 && (
                 <Card>
-                    <CardHeader>
+                    <CardHeader className="flex flex-row items-center justify-between gap-4">
                         <CardTitle>Results</CardTitle>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={exportResultsToCsv}
+                            className="cursor-pointer"
+                        >
+                            Export to CSV
+                        </Button>
                     </CardHeader>
                     <CardContent>
                         <Table>
