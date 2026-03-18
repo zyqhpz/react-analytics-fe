@@ -1,6 +1,7 @@
 import type { CurrentUser } from "@/types/user";
 import { API_BASE_URL } from "./base";
 import { getAuthHeaders } from "./client";
+import { handleUnauthorizedStatus } from "./utils";
 
 type CurrentUserResponse = {
     response_code: number;
@@ -13,6 +14,8 @@ export const fetchCurrentUser = async () => {
     const res = await fetch(`${API_BASE_URL}/api/v1/users/me`, {
         headers: getAuthHeaders(),
     });
+
+    handleUnauthorizedStatus(res.status);
 
     const json: CurrentUserResponse = await res.json();
 

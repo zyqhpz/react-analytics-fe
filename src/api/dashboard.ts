@@ -1,5 +1,6 @@
 import { API_BASE_URL } from "./base";
 import { getAuthHeaders } from "./client";
+import { handleUnauthorizedStatus } from "./utils";
 
 export const fetchDashboard = async (dashboardID: string) => {
     const res = await fetch(
@@ -9,11 +10,13 @@ export const fetchDashboard = async (dashboardID: string) => {
         },
     );
 
+    handleUnauthorizedStatus(res.status);
+
     const json = await res.json();
 
     if (!res.ok) {
         throw new Error(json.description);
     }
 
-    return json
+    return json;
 };

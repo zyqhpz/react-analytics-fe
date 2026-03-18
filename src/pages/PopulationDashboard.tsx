@@ -1,5 +1,6 @@
 import { API_BASE_URL } from "@/api/base";
 import { getAuthHeaders } from "@/api/client";
+import { handleUnauthorizedStatus } from "@/api/utils";
 import * as echarts from "echarts";
 import * as echartsCharts from "echarts/charts";
 import { GridStack, type GridStackNode, type GridStackWidget } from "gridstack";
@@ -1644,6 +1645,8 @@ export default function PopulationDashboard() {
                 headers: getAuthHeaders(),
                 body: JSON.stringify(payload),
             });
+
+            handleUnauthorizedStatus(res.status);
 
             if (!res.ok) {
                 throw new Error("Failed to save dashboard");

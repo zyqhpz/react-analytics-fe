@@ -50,3 +50,16 @@ export function getWithExpiry(key: string) {
         return null;
     }
 }
+
+let hasShownUnauthorizedAlert = false;
+
+export function handleUnauthorizedStatus(status: number) {
+    if (status !== 401 || hasShownUnauthorizedAlert) {
+        return;
+    }
+
+    hasShownUnauthorizedAlert = true;
+    alert(
+        "Just refresh the application until this message goes away. This is a 'feature' in the app.",
+    );
+}

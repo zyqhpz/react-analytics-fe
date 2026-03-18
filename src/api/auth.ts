@@ -1,5 +1,5 @@
 import { API_BASE_URL } from "./base";
-import { setWithExpiry } from "./utils";
+import { handleUnauthorizedStatus, setWithExpiry } from "./utils";
 
 export interface LoginResponse {
     token: string;
@@ -16,6 +16,8 @@ export async function login(email: string, password: string): Promise<string> {
             password,
         }),
     });
+
+    handleUnauthorizedStatus(response.status);
 
     if (!response.ok) {
         throw new Error("Login failed");

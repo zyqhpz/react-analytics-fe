@@ -1,6 +1,7 @@
 import { API_BASE_URL } from "@/api/base";
 import { getAuthHeaders } from "@/api/client";
 import { deleteSavedQuery, fetchSavedQueries } from "@/api/queries";
+import { handleUnauthorizedStatus } from "@/api/utils";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -325,7 +326,10 @@ export default function App() {
         fetch(`${API_BASE_URL}/api/v1/query/schemas`, {
             headers: getAuthHeaders(),
         })
-            .then((res) => res.json())
+            .then((res) => {
+                handleUnauthorizedStatus(res.status);
+                return res.json();
+            })
             .then((data) => {
                 // map response to GetSchemasResponse type
                 const typedData: GetSchemasResponse = {
@@ -607,6 +611,8 @@ export default function App() {
             body: JSON.stringify(payload),
         });
 
+        handleUnauthorizedStatus(res.status);
+
         const data = await res.json();
 
         if (res.ok) {
@@ -708,6 +714,8 @@ export default function App() {
             headers: getAuthHeaders(),
             body: JSON.stringify(payload),
         });
+
+        handleUnauthorizedStatus(res.status);
 
         if (res.ok) {
             const data = await res.json();
