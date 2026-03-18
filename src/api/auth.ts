@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "./base";
 import { setWithExpiry } from "./utils";
 
 export interface LoginResponse {
@@ -5,7 +6,7 @@ export interface LoginResponse {
 }
 
 export async function login(email: string, password: string): Promise<string> {
-    const response = await fetch("http://localhost:8080/api/v1/auth/login", {
+    const response = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",

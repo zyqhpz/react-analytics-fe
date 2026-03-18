@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "@/api/base";
 import { getAuthHeaders } from "@/api/client";
 import * as echarts from "echarts";
 import * as echartsCharts from "echarts/charts";
@@ -1638,7 +1639,7 @@ export default function PopulationDashboard() {
                 widgets,
             };
 
-            const res = await fetch("http://localhost:8080/api/v1/widgets", {
+            const res = await fetch(`${API_BASE_URL}/api/v1/widgets`, {
                 method: "POST",
                 headers: getAuthHeaders(),
                 body: JSON.stringify(payload),
@@ -1954,12 +1955,12 @@ export default function PopulationDashboard() {
                                         <label
                                             key={chartTypeOption.value}
                                             className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center transition ${isSelected
-                                                    ? isCompatible
-                                                        ? "border-emerald-300/50 bg-emerald-500/15 text-emerald-100 shadow-[0_0_0_1px_rgba(110,231,183,0.2)]"
-                                                        : "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
-                                                    : isCompatible
-                                                        ? "cursor-pointer border-emerald-400/35 bg-emerald-500/8 text-emerald-100 hover:bg-emerald-500/14"
-                                                        : "cursor-pointer border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
+                                                ? isCompatible
+                                                    ? "border-emerald-300/50 bg-emerald-500/15 text-emerald-100 shadow-[0_0_0_1px_rgba(110,231,183,0.2)]"
+                                                    : "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
+                                                : isCompatible
+                                                    ? "cursor-pointer border-emerald-400/35 bg-emerald-500/8 text-emerald-100 hover:bg-emerald-500/14"
+                                                    : "cursor-pointer border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
                                                 }`}
                                         >
                                             <input
@@ -2076,10 +2077,10 @@ export default function PopulationDashboard() {
                                 </p>
                                 <span
                                     className={`rounded-md px-2 py-1 text-xs ${selectedChartPreview.status === "ready"
-                                            ? "border border-emerald-300/30 bg-emerald-500/10 text-emerald-100"
-                                            : selectedChartPreview.status === "fallback"
-                                                ? "border border-amber-300/30 bg-amber-500/10 text-amber-100"
-                                                : "border border-white/15 bg-slate-900/70 text-slate-300"
+                                        ? "border border-emerald-300/30 bg-emerald-500/10 text-emerald-100"
+                                        : selectedChartPreview.status === "fallback"
+                                            ? "border border-amber-300/30 bg-amber-500/10 text-amber-100"
+                                            : "border border-white/15 bg-slate-900/70 text-slate-300"
                                         }`}
                                 >
                                     {selectedChartPreview.status === "ready"

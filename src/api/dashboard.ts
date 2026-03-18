@@ -1,8 +1,9 @@
+import { API_BASE_URL } from "./base";
 import { getAuthHeaders } from "./client";
 
 export const fetchDashboard = async (dashboardID: string) => {
     const res = await fetch(
-        `http://localhost:8080/api/v1/dashboards/${dashboardID}?include_data=true`,
+        `${API_BASE_URL}/api/v1/dashboards/${dashboardID}?include_data=true`,
         {
             headers: getAuthHeaders(),
         },

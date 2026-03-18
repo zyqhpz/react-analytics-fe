@@ -1,4 +1,5 @@
 import type { CurrentUser } from "@/types/user";
+import { API_BASE_URL } from "./base";
 import { getAuthHeaders } from "./client";
 
 type CurrentUserResponse = {
@@ -9,7 +10,7 @@ type CurrentUserResponse = {
 };
 
 export const fetchCurrentUser = async () => {
-    const res = await fetch("http://localhost:8080/api/v1/users/me", {
+    const res = await fetch(`${API_BASE_URL}/api/v1/users/me`, {
         headers: getAuthHeaders(),
     });
 

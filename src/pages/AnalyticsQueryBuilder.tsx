@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "@/api/base";
 import { getAuthHeaders } from "@/api/client";
 import { deleteSavedQuery, fetchSavedQueries } from "@/api/queries";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
@@ -321,7 +322,7 @@ export default function App() {
 
     // 🔥 Fetch schema from backend
     useEffect(() => {
-        fetch("http://localhost:8080/api/v1/query/schemas", {
+        fetch(`${API_BASE_URL}/api/v1/query/schemas`, {
             headers: getAuthHeaders(),
         })
             .then((res) => res.json())
@@ -600,14 +601,11 @@ export default function App() {
 
         console.log("Payload:", payload);
 
-        const res = await fetch(
-            `http://localhost:8080/api/v1/query/test/${queryType}`,
-            {
-                method: "POST",
-                headers: getAuthHeaders(),
-                body: JSON.stringify(payload),
-            },
-        );
+        const res = await fetch(`${API_BASE_URL}/api/v1/query/test/${queryType}`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify(payload),
+        });
 
         const data = await res.json();
 
@@ -700,8 +698,8 @@ export default function App() {
         };
 
         const url = selectedQueryId
-            ? `http://localhost:8080/api/v1/query/${selectedQueryId}`
-            : "http://localhost:8080/api/v1/query";
+            ? `${API_BASE_URL}/api/v1/query/${selectedQueryId}`
+            : `${API_BASE_URL}/api/v1/query`;
 
         const method = selectedQueryId ? "PUT" : "POST";
 

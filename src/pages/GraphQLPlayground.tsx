@@ -1,9 +1,9 @@
+import { API_BASE_URL } from "@/api/base";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
 import { Link } from "react-router-dom";
 
-const PLAYGROUND_URL = "http://localhost:8080/playground";
-
 export default function GraphQLPlayground() {
+    const playgroundUrl = `${API_BASE_URL}/playground`;
     return (
         <div className="min-h-screen bg-linear-to-br from-slate-950 via-slate-900 to-cyan-950 text-white">
             <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-6 md:px-8">
@@ -18,7 +18,7 @@ export default function GraphQLPlayground() {
                         <p className="max-w-3xl text-sm text-slate-300">
                             This embeds the backend GraphQL UI from{" "}
                             <span className="font-medium text-slate-100">
-                                {PLAYGROUND_URL}
+                                {playgroundUrl}
                             </span>
                             . If the iframe is blocked, the backend must allow embedding for
                             this origin.
@@ -41,7 +41,7 @@ export default function GraphQLPlayground() {
                                 Query Builder
                             </Link>
                             <a
-                                href={PLAYGROUND_URL}
+                                href={playgroundUrl}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="rounded-lg border border-cyan-300/30 bg-cyan-500/15 px-4 py-2 text-sm text-cyan-100 transition hover:bg-cyan-500/25"
@@ -55,7 +55,7 @@ export default function GraphQLPlayground() {
                 <div className="flex min-h-[75vh] flex-1 overflow-hidden rounded-2xl border border-white/10 bg-slate-950/70 shadow-[0_20px_60px_rgba(2,6,23,0.5)]">
                     <iframe
                         title="GraphQL Playground"
-                        src={PLAYGROUND_URL}
+                        src={playgroundUrl}
                         className="h-full min-h-[75vh] w-full border-0 bg-white"
                         referrerPolicy="no-referrer"
                     />
