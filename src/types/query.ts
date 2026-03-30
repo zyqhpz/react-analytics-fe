@@ -21,6 +21,13 @@ export type Aggregation = {
     alias?: string;
 };
 
+export type SelectedColumn = {
+    name: string;
+    alias?: string;
+};
+
+export type VisualSelectColumn = string | SelectedColumn;
+
 export type PivotValueValue = string | number | boolean | null;
 
 export type PivotValue = {
@@ -67,7 +74,7 @@ export type FullSchema = {
 export type VisualQueryRequest = {
     table: string;
     joins: Join[];
-    select: string[];
+    select: VisualSelectColumn[];
     aggregations: Aggregation[];
     group_by: string[];
     fill_missing_dates?: boolean;

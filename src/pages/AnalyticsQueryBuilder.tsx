@@ -41,7 +41,9 @@ import type {
     PivotValue,
     PivotValueValue,
     QueryRow,
+    SelectedColumn,
     VisualQueryRequest,
+    VisualSelectColumn,
 } from "@/types/query";
 
 const getResultColumns = (data: QueryRow[] = []): string[] =>
@@ -82,7 +84,7 @@ export default function App() {
         combinator: "and",
         rules: [],
     });
-    const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
+    const [selectedColumns, setSelectedColumns] = useState<SelectedColumn[]>([]);
     const [aggregations, setAggregations] = useState<Aggregation[]>([]);
     const [groupBy, setGroupBy] = useState<string[]>([]);
     const [groupByDateField, setGroupByDateField] = useState("");
@@ -139,6 +141,26 @@ export default function App() {
 
     const getAggregationAlias = (agg: Aggregation) =>
         agg.alias?.trim() || getDefaultAggregationAlias(agg);
+
+    const getSelectedColumnName = (column: VisualSelectColumn) =>
+        typeof column === "string" ? column : column.name;
+
+    const getSelectedColumnAlias = (column: VisualSelectColumn) =>
+        typeof column === "string" ? "" : column.alias?.trim() || "";
+
+    const normalizeSelectedColumns = (
+        columns: VisualQueryRequest["select"] = [],
+    ): SelectedColumn[] =>
+        columns.reduce<SelectedColumn[]>((acc, column) => {
+            const name = getSelectedColumnName(column).trim();
+            if (!name || acc.some((item) => item.name === name)) {
+                return acc;
+            }
+
+            const alias = getSelectedColumnAlias(column);
+            acc.push(alias ? { name, alias } : { name });
+            return acc;
+        }, []);
 
     const hasSelectValue = (value: string | null | undefined) =>
         typeof value === "string" && value.trim().length > 0;
@@ -349,8 +371,8 @@ export default function App() {
         setSelectedColumns((prev) =>
             prev.filter(
                 (col) =>
-                    !col.includes(".") ||
-                    joins.some((j) => col.startsWith(j.table + ".")),
+                    !col.name.includes(".") ||
+                    joins.some((j) => col.name.startsWith(j.table + ".")),
             ),
         );
     }, [joins]);
@@ -385,7 +407,7 @@ export default function App() {
             if (config) {
                 setTable(config.table || "");
                 setJoins(config.joins || []);
-                setSelectedColumns(config.select || []);
+                setSelectedColumns(normalizeSelectedColumns(config.select || []));
                 setAggregations(
                     (config.aggregations || []).map((agg: Aggregation) => ({
                         ...agg,
@@ -457,11 +479,11 @@ export default function App() {
 
     const toggleColumn = (column: string) => {
         setSelectedColumns((prev) => {
-            const updated = prev.includes(column)
-                ? prev.filter((c) => c !== column)
-                : [...prev, column];
+            const updated = prev.some((item) => item.name === column)
+                ? prev.filter((item) => item.name !== column)
+                : [...prev, { name: column }];
 
-            // 🔥 Auto-add join if selecting joined field
+            // Auto-add join if selecting a joined field.
             const joinTable = getJoinTableFromField(column);
             if (joinTable) {
                 setJoins((prevJoins) => {
@@ -472,6 +494,16 @@ export default function App() {
 
             return updated;
         });
+    };
+
+    const updateSelectedColumnAlias = (column: string, alias: string) => {
+        setSelectedColumns((prev) =>
+            prev.map((item) => {
+                if (item.name !== column) return item;
+                if (!alias.trim()) return { name: item.name };
+                return { ...item, alias };
+            }),
+        );
     };
 
     const toggleGroupBy = (column: string) => {
@@ -522,7 +554,7 @@ export default function App() {
 
         setSelectedColumns((prev) =>
             prev.filter((col) => {
-                const tbl = getFieldJoinTable(col);
+                const tbl = getFieldJoinTable(col.name);
                 if (!tbl) return true;
                 return joins.some((j) => j.table === tbl);
             }),
@@ -550,9 +582,18 @@ export default function App() {
 
     const aggregationAliases = aggregations.map(getAggregationAlias);
 
-    const effectiveSelectColumns = Array.from(
-        new Set([...selectedColumns, ...groupBy]),
-    );
+    const effectiveSelectColumns: SelectedColumn[] = [
+        ...selectedColumns,
+        ...groupBy
+            .filter(
+                (groupField) =>
+                    !selectedColumns.some((column) => column.name === groupField),
+            )
+            .map((groupField) => ({ name: groupField })),
+    ].map((column: SelectedColumn) => {
+        const alias = column.alias?.trim();
+        return alias ? { ...column, alias } : { name: column.name };
+    });
 
     const havingFields = aggregationAliases.map((alias) => ({
         name: alias,
@@ -969,26 +1010,43 @@ export default function App() {
                         <CardContent>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                 {getAllColumns().map((col) => {
-                                    const active = selectedColumns.includes(col.name);
+                                    const selectedColumn = selectedColumns.find(
+                                        (item) => item.name === col.name,
+                                    );
+                                    const active = Boolean(selectedColumn);
                                     return (
                                         <div
                                             key={col.name}
                                             className={`
-                    flex items-center space-x-2 rounded-lg border p-3
+                    space-y-3 rounded-lg border p-3
                     cursor-pointer transition-all
                     hover:shadow-sm hover:border-primary/40
                     ${active ? "bg-primary/5 border-primary/40" : "bg-background"}
                   `}
                                             onClick={() => toggleColumn(col.name)}
                                         >
-                                            <Checkbox
-                                                checked={active}
-                                                onCheckedChange={() => toggleColumn(col.name)}
-                                                onClick={(e: MouseEvent) => e.stopPropagation()}
-                                            />
-                                            <label className="text-sm truncate cursor-pointer">
-                                                {col.label}
-                                            </label>
+                                            <div className="flex items-center space-x-2">
+                                                <Checkbox
+                                                    checked={active}
+                                                    onCheckedChange={() => toggleColumn(col.name)}
+                                                    onClick={(e: MouseEvent) => e.stopPropagation()}
+                                                />
+                                                <label className="text-sm truncate cursor-pointer">
+                                                    {col.label}
+                                                </label>
+                                            </div>
+                                            {active && (
+                                                <input
+                                                    type="text"
+                                                    value={selectedColumn?.alias || ""}
+                                                    onChange={(e) =>
+                                                        updateSelectedColumnAlias(col.name, e.target.value)
+                                                    }
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    placeholder="Alias (optional)"
+                                                    className="w-full rounded border px-3 py-2 text-sm"
+                                                />
+                                            )}
                                         </div>
                                     );
                                 })}
