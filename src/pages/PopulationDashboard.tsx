@@ -1213,6 +1213,7 @@ export default function PopulationDashboard() {
   const [selectedChartType, setSelectedChartType] = useState<ChartType>("line");
 
   const [saving, setSaving] = useState(false);
+  const [refreshingDashboard, setRefreshingDashboard] = useState(false);
 
   const [queries, setQueries] = useState<Query[]>([]);
   const [selectedQueryId, setSelectedQueryId] = useState<string>("");
@@ -1972,6 +1973,7 @@ export default function PopulationDashboard() {
       if (!container) return;
 
       try {
+        setRefreshingDashboard(true);
         const result = await fetchDashboard(dashboardId);
 
         if (!result?.data) {
@@ -2061,6 +2063,8 @@ export default function PopulationDashboard() {
         console.error("Failed to load dashboard:", err);
         toast.error("Failed to load dashboard: " + (err as Error).message);
         return;
+      } finally {
+        setRefreshingDashboard(false);
       }
     },
     [addWidget, destroyChart, initChart, resizeAllCharts],
@@ -2250,7 +2254,7 @@ export default function PopulationDashboard() {
                       value={selectedDashboardId}
                       onValueChange={handleDashboardSelectionChange}
                     >
-                      <SelectTrigger className="w-full border-white/10 bg-slate-950/55 text-slate-100">
+                      <SelectTrigger className="w-full cursor-pointer border-white/10 bg-slate-950/55 text-slate-100">
                         <SelectValue placeholder="Select dashboard" />
                       </SelectTrigger>
                       <SelectContent className="border-white/10 bg-slate-950/95 text-slate-100">
@@ -2258,7 +2262,7 @@ export default function PopulationDashboard() {
                           <SelectItem
                             key={dashboard.id}
                             value={dashboard.id}
-                            className="focus:bg-slate-800 focus:text-white"
+                            className="cursor-pointer focus:bg-slate-800 focus:text-white"
                           >
                             {formatDashboardLabel(dashboard)}
                           </SelectItem>
@@ -2302,6 +2306,19 @@ export default function PopulationDashboard() {
                 className="rounded-xl border-indigo-300/30 bg-indigo-500/25 text-indigo-50 hover:bg-indigo-500/35 hover:text-indigo-50 disabled:opacity-60"
               >
                 {saving ? "Saving..." : "Save Dashboard"}
+              </Button>
+
+              <Button
+                onClick={() =>
+                  selectedDashboardId
+                    ? void loadDashboardFromAPI(selectedDashboardId)
+                    : undefined
+                }
+                disabled={!selectedDashboardId || refreshingDashboard}
+                variant="outline"
+                className="rounded-xl border-amber-300/30 bg-amber-500/15 text-amber-100 hover:bg-amber-500/25 hover:text-amber-100 disabled:opacity-60"
+              >
+                {refreshingDashboard ? "Refreshing..." : "Refresh Dashboard"}
               </Button>
 
               <Button
