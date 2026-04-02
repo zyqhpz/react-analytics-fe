@@ -9,6 +9,7 @@ import {
 
 import { login as loginRequest, logout as logoutRequest } from "@/api/auth";
 import { fetchCurrentUser } from "@/api/users";
+import { clearSelectedDashboardId } from "@/api/dashboard";
 import {
   clearAuthSession,
   getSessionToken,
@@ -36,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const token = getSessionToken();
     if (!token) {
       setCurrentUser(null);
+      clearSelectedDashboardId();
       clearAuthSession();
       return null;
     }
@@ -50,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       return user;
     } catch (error) {
+      clearSelectedDashboardId();
       clearAuthSession();
       setCurrentUser(null);
       throw error;
@@ -109,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await logoutRequest();
     } finally {
+      clearSelectedDashboardId();
       clearAuthSession();
       setCurrentUser(null);
     }

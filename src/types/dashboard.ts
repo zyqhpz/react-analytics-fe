@@ -1,5 +1,28 @@
 import { type ChartType, type QueryRow } from "@/types/query";
 
+export interface DashboardDepartment {
+  id: string;
+  name: string;
+  slug: string;
+  settings: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DashboardSummary {
+  id: string;
+  name: string;
+  description: string;
+  department_id: string;
+  department?: DashboardDepartment;
+  created_at: string;
+  created_by: string;
+  is_public: boolean;
+  refresh_interval: number;
+  updated_at: string;
+  variables: string;
+}
+
 export interface DashboardWidget {
   id: string;
   queryId: string;

@@ -10,9 +10,22 @@ import { createRoot, type Root } from "react-dom/client";
 import { Link, useNavigate } from "react-router-dom";
 import { v7 as uuidv7 } from "uuid";
 
-import { fetchDashboard } from "@/api/dashboard";
+import {
+  clearSelectedDashboardId,
+  fetchDashboard,
+  fetchDashboards,
+  getSelectedDashboardId,
+  setSelectedDashboardId,
+} from "@/api/dashboard";
 import { fetchQueryWithData, fetchSavedQueries } from "@/api/queries";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Pagination,
   PaginationContent,
@@ -29,7 +42,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { type DashboardWidget, type WidgetPosition } from "@/types/dashboard";
+import { useAuth } from "@/context/AuthContext";
+import {
+  type DashboardSummary,
+  type DashboardWidget,
+  type WidgetPosition,
+} from "@/types/dashboard";
 import { type ChartType, type Query, type QueryRow } from "@/types/query";
 import { toast } from "sonner";
 
@@ -84,8 +102,6 @@ type ChartPreviewSummary = {
   sampleItems: string[];
 };
 
-const DASHBOARD_ID = "019c7377-64b0-75c7-93e3-8f2152715aa5";
-
 const formatCompactNumber = (value: unknown): string => {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return String(value ?? "");
@@ -116,6 +132,14 @@ const formatTableValue = (value: unknown): string => {
   }
 
   return String(value);
+};
+
+const formatDashboardLabel = (dashboard: DashboardSummary) => {
+  if (dashboard.department?.name) {
+    return `${dashboard.name} / ${dashboard.department.name}`;
+  }
+
+  return dashboard.name;
 };
 
 const getColumns = (data: QueryRow[] = [], schema?: string[]): string[] => {
@@ -1139,6 +1163,7 @@ export function buildOption(
 }
 
 export default function PopulationDashboard() {
+  const { currentUser } = useAuth();
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<GridStack | null>(null);
 
@@ -1148,6 +1173,12 @@ export default function PopulationDashboard() {
   const widgetsRef = useRef<DashboardWidget[]>([]);
 
   const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
+  const [dashboardOptions, setDashboardOptions] = useState<DashboardSummary[]>(
+    [],
+  );
+  const [selectedDashboardId, setSelectedDashboardIdState] = useState("");
+  const [loadingDashboardOptions, setLoadingDashboardOptions] = useState(true);
+  const [dashboardSelectorOpen, setDashboardSelectorOpen] = useState(false);
 
   const [dashboardName, setDashboardName] = useState("My Dashboard");
   const [dashboardDescription, setDashboardDescription] = useState("");
@@ -1164,6 +1195,13 @@ export default function PopulationDashboard() {
   const [loadingQueryPreview, setLoadingQueryPreview] = useState(false);
 
   const navigate = useNavigate();
+  const selectedDashboardOption = useMemo(
+    () =>
+      dashboardOptions.find(
+        (dashboard) => dashboard.id === selectedDashboardId,
+      ) ?? null,
+    [dashboardOptions, selectedDashboardId],
+  );
   const chartTypeOptions = useMemo(() => {
     const toLabel = (type: string) =>
       type
@@ -1225,6 +1263,67 @@ export default function PopulationDashboard() {
   useEffect(() => {
     widgetsRef.current = widgets;
   }, [widgets]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        setLoadingDashboardOptions(true);
+
+        const dashboards = await fetchDashboards(currentUser?.role?.name);
+
+        if (cancelled) return;
+
+        setDashboardOptions(dashboards);
+
+        if (!dashboards.length) {
+          clearSelectedDashboardId();
+          setSelectedDashboardIdState("");
+          setDashboardSelectorOpen(false);
+          toast.error("No dashboards are available for this account.");
+          return;
+        }
+
+        const storedDashboardId = getSelectedDashboardId();
+        const matchedDashboard = dashboards.find(
+          (dashboard) => dashboard.id === storedDashboardId,
+        );
+        const nextDashboardId = matchedDashboard?.id ?? "";
+
+        if (nextDashboardId) {
+          setSelectedDashboardIdState(nextDashboardId);
+          setDashboardSelectorOpen(false);
+          return;
+        }
+
+        clearSelectedDashboardId();
+        setSelectedDashboardIdState("");
+        setDashboardSelectorOpen(true);
+      } catch (err) {
+        if (cancelled) return;
+
+        setDashboardOptions([]);
+        setSelectedDashboardIdState("");
+        clearSelectedDashboardId();
+        toast.error("Failed to load dashboards: " + (err as Error).message);
+      } finally {
+        if (!cancelled) {
+          setLoadingDashboardOptions(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.role?.name]);
+
+  const handleDashboardSelectionChange = useCallback((dashboardId: string) => {
+    setSelectedDashboardIdState(dashboardId);
+    setSelectedDashboardId(dashboardId);
+    setDashboardSelectorOpen(false);
+  }, []);
 
   const updateWidgetData = useCallback(
     (id: string, data: QueryRow[], schema?: string[]) => {
@@ -1613,7 +1712,7 @@ export default function PopulationDashboard() {
 
   const saveDashboard = useCallback(async () => {
     const grid = gridRef.current;
-    if (!grid) return;
+    if (!grid || !selectedDashboardId) return;
 
     try {
       setSaving(true);
@@ -1636,7 +1735,7 @@ export default function PopulationDashboard() {
       });
 
       const payload = {
-        dashboard_id: DASHBOARD_ID,
+        dashboard_id: selectedDashboardId,
         widgets,
       };
 
@@ -1660,116 +1759,110 @@ export default function PopulationDashboard() {
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [selectedDashboardId]);
 
   /**
    * Load dashboard configuration + query results from API
    */
-  const loadDashboardFromAPI = useCallback(async () => {
-    const container = gridContainerRef.current;
-    if (!container) return;
+  const loadDashboardFromAPI = useCallback(
+    async (dashboardId: string) => {
+      const container = gridContainerRef.current;
+      if (!container) return;
 
-    try {
-      const result = await fetchDashboard(DASHBOARD_ID);
+      try {
+        const result = await fetchDashboard(dashboardId);
 
-      if (!result?.data) {
-        throw new Error("Dashboard response missing data");
-      }
+        if (!result?.data) {
+          throw new Error("Dashboard response missing data");
+        }
 
-      setDashboardName(result.data?.name || "My Dashboard");
-      setDashboardDescription(result.data?.description || "");
+        setDashboardName(result.data?.name || "My Dashboard");
+        setDashboardDescription(result.data?.description || "");
 
-      const list: BackendWidget[] = result?.data?.widgets ?? [];
-      if (!list.length) return;
+        const list: BackendWidget[] = result?.data?.widgets ?? [];
 
-      // 1. Destroy all charts first
-      Object.keys(chartsRef.current).forEach(destroyChart);
+        // 1. Destroy all charts first
+        Object.keys(chartsRef.current).forEach(destroyChart);
+        widgetsMetaRef.current = {};
 
-      // 2. Fully destroy the grid instance and wipe the container DOM
-      if (gridRef.current) {
-        gridRef.current.destroy(false); // keeps DOM nodes
-        gridRef.current = null;
-      }
-      // Manually remove all grid-stack-item children
-      container.innerHTML = "";
+        // 2. Fully destroy the grid instance and wipe the container DOM
+        if (gridRef.current) {
+          gridRef.current.destroy(false); // keeps DOM nodes
+          gridRef.current = null;
+        }
+        // Manually remove all grid-stack-item children
+        container.innerHTML = "";
 
-      // 3. Reinitialize a fresh grid
-      const grid = GridStack.init(
-        { column: 12, cellHeight: 120, margin: 15, float: false },
-        container,
-      );
-      gridRef.current = grid;
+        // 3. Reinitialize a fresh grid
+        const grid = GridStack.init(
+          { column: 12, cellHeight: 120, margin: 15, float: false },
+          container,
+        );
+        gridRef.current = grid;
 
-      // Re-attach resize listeners
-      grid.on("resize", () => resizeAllCharts());
-      grid.on("resizestop", () => resizeAllCharts());
-      grid.on("dragstop", () => resizeAllCharts());
+        // Re-attach resize listeners
+        grid.on("resize", () => resizeAllCharts());
+        grid.on("resizestop", () => resizeAllCharts());
+        grid.on("dragstop", () => resizeAllCharts());
 
-      if (!list.length) {
         setWidgets([]);
+
+        if (!list.length) {
+          return;
+        }
+
+        const loadedWidgets: DashboardWidget[] = [];
+        const pendingCharts: Array<() => void> = [];
+
+        for (const w of list) {
+          const id = w.id;
+          const type = w.widget_type;
+          const data = w.query?.data ?? [];
+          const schema = w.query?.result_schema;
+
+          widgetsMetaRef.current[id] = {
+            queryId: w.query?.id ?? "",
+            chartType: type,
+          };
+
+          addWidget({
+            id,
+            x: w.position.x,
+            y: w.position.y,
+            w: w.position.w,
+            h: w.position.h,
+            title: w.query?.name || `${type.toUpperCase()} CHART`,
+          });
+
+          // requestAnimationFrame(() => initChart(id, type, data, schema));
+
+          loadedWidgets.push({
+            id,
+            queryId: w.query?.id ?? "",
+            chartType: type,
+            title: w.query?.name || "",
+            position: w.position,
+            data,
+            schema,
+          });
+
+          pendingCharts.push(() => initChart(id, type, data, schema));
+        }
+
+        setWidgets(loadedWidgets);
+
+        requestAnimationFrame(() => {
+          pendingCharts.forEach((fn) => fn());
+          resizeAllCharts();
+        });
+      } catch (err) {
+        console.error("Failed to load dashboard:", err);
+        toast.error("Failed to load dashboard: " + (err as Error).message);
         return;
       }
-
-      gridContainerRef.current
-        ?.querySelectorAll(".grid-stack-item")
-        .forEach((el) => el.remove());
-      setWidgets([]);
-
-      const loadedWidgets: DashboardWidget[] = [];
-      const pendingCharts: Array<() => void> = [];
-
-      for (const w of list) {
-        const id = w.id;
-        const type = w.widget_type;
-        const data = w.query?.data ?? [];
-        const schema = w.query?.result_schema;
-
-        widgetsMetaRef.current[id] = {
-          queryId: w.query?.id ?? "",
-          chartType: type,
-        };
-
-        addWidget({
-          id,
-          x: w.position.x,
-          y: w.position.y,
-          w: w.position.w,
-          h: w.position.h,
-          title: w.query?.name || `${type.toUpperCase()} CHART`,
-        });
-
-        // requestAnimationFrame(() => initChart(id, type, data, schema));
-
-        loadedWidgets.push({
-          id,
-          queryId: w.query?.id ?? "",
-          chartType: type,
-          title: w.query?.name || "",
-          position: w.position,
-          data,
-          schema,
-        });
-
-        pendingCharts.push(() => initChart(id, type, data, schema));
-      }
-
-      setWidgets(loadedWidgets);
-
-      requestAnimationFrame(() => {
-        pendingCharts.forEach((fn) => fn());
-        resizeAllCharts();
-      });
-    } catch (err) {
-      console.error("Failed to load dashboard:", err);
-      toast.error("Failed to load dashboard: " + (err as Error).message);
-      return;
-    }
-  }, [addWidget, destroyChart, initChart, resizeAllCharts]);
-
-  const loadDashboardFromAPIRef = useRef(loadDashboardFromAPI);
-  useEffect(() => {
-    loadDashboardFromAPIRef.current = loadDashboardFromAPI;
-  }, [loadDashboardFromAPI]);
+    },
+    [addWidget, destroyChart, initChart, resizeAllCharts],
+  );
 
   useEffect(() => {
     const container = gridContainerRef.current;
@@ -1843,8 +1936,6 @@ export default function PopulationDashboard() {
 
     window.addEventListener("resize", resizeAllCharts);
 
-    loadDashboardFromAPIRef.current();
-
     return () => {
       container.removeEventListener("click", onClick);
       window.removeEventListener("resize", resizeAllCharts);
@@ -1855,6 +1946,14 @@ export default function PopulationDashboard() {
       gridRef.current = null;
     };
   }, [deleteWidget, destroyChart, exportWidgetCsv, resizeAllCharts]);
+
+  useEffect(() => {
+    if (!selectedDashboardId || !gridContainerRef.current) {
+      return;
+    }
+
+    void loadDashboardFromAPI(selectedDashboardId);
+  }, [loadDashboardFromAPI, selectedDashboardId]);
 
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-950 via-slate-900 to-indigo-950 text-white relative overflow-x-hidden">
@@ -1874,6 +1973,32 @@ export default function PopulationDashboard() {
                 <p className="mt-2 text-sm text-slate-300/90 md:text-base">
                   {dashboardDescription || "Analytics workspace"}
                 </p>
+                {selectedDashboardId ? (
+                  <div className="mt-4 flex flex-col gap-2 sm:max-w-sm">
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Active Dashboard
+                    </span>
+                    <Select
+                      value={selectedDashboardId}
+                      onValueChange={handleDashboardSelectionChange}
+                    >
+                      <SelectTrigger className="w-full border-white/10 bg-slate-950/55 text-slate-100">
+                        <SelectValue placeholder="Select dashboard" />
+                      </SelectTrigger>
+                      <SelectContent className="border-white/10 bg-slate-950/95 text-slate-100">
+                        {dashboardOptions.map((dashboard) => (
+                          <SelectItem
+                            key={dashboard.id}
+                            value={dashboard.id}
+                            className="focus:bg-slate-800 focus:text-white"
+                          >
+                            {formatDashboardLabel(dashboard)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
               </div>
               <div className="flex flex-col items-end gap-2">
                 <CurrentUserBadge />
@@ -1918,6 +2043,65 @@ export default function PopulationDashboard() {
           <div ref={gridContainerRef} className="grid-stack mt-6 pb-8" />
         </div>
       </div>
+
+      {(loadingDashboardOptions || dashboardSelectorOpen) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900/90 p-6 shadow-2xl">
+            <h2 className="text-xl font-semibold text-slate-100">
+              Select Dashboard
+            </h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Choose a dashboard before entering the analytics workspace.
+            </p>
+
+            <div className="mt-6">
+              {loadingDashboardOptions ? (
+                <div className="rounded-xl border border-white/10 bg-slate-950/60 px-4 py-6 text-center text-sm text-slate-300">
+                  Loading available dashboards...
+                </div>
+              ) : dashboardOptions.length ? (
+                <div className="space-y-3">
+                  <Select
+                    value={selectedDashboardId || undefined}
+                    onValueChange={handleDashboardSelectionChange}
+                  >
+                    <SelectTrigger className="w-full border-white/10 bg-slate-950/60 text-slate-100">
+                      <SelectValue placeholder="Select a dashboard" />
+                    </SelectTrigger>
+                    <SelectContent className="border-white/10 bg-slate-950/95 text-slate-100">
+                      {dashboardOptions.map((dashboard) => (
+                        <SelectItem
+                          key={dashboard.id}
+                          value={dashboard.id}
+                          className="focus:bg-slate-800 focus:text-white"
+                        >
+                          {formatDashboardLabel(dashboard)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {selectedDashboardOption ? (
+                    <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                      <p className="text-sm font-medium text-slate-100">
+                        {selectedDashboardOption.name}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        {selectedDashboardOption.description ||
+                          "No dashboard description provided."}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-400/20 bg-amber-500/10 px-4 py-4 text-sm text-amber-100">
+                  No dashboards are currently available.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
