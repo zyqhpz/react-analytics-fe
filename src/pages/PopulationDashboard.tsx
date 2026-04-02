@@ -12,13 +12,16 @@ import { v7 as uuidv7 } from "uuid";
 
 import {
   clearSelectedDashboardId,
+  createDashboard,
   fetchDashboard,
   fetchDashboards,
   getSelectedDashboardId,
   setSelectedDashboardId,
+  updateDashboard,
 } from "@/api/dashboard";
 import { fetchQueryWithData, fetchSavedQueries } from "@/api/queries";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -141,6 +144,9 @@ const formatDashboardLabel = (dashboard: DashboardSummary) => {
 
   return dashboard.name;
 };
+
+const normalizeRoleName = (roleName?: string | null) =>
+  roleName?.trim().toUpperCase() ?? "";
 
 const getColumns = (data: QueryRow[] = [], schema?: string[]): string[] => {
   const rawColumns = schema?.length
@@ -1164,6 +1170,13 @@ export function buildOption(
 
 export default function PopulationDashboard() {
   const { currentUser } = useAuth();
+  const currentRoleName = normalizeRoleName(currentUser?.role?.name);
+  const isSuperAdmin = currentRoleName === "SUPER_ADMIN";
+  const canManageDashboardMeta = new Set(["SUPER_ADMIN", "ADMIN", "EDITOR"]).has(
+    currentRoleName,
+  );
+  const userDepartmentValue =
+    currentUser?.department?.slug || currentUser?.department?.name || "";
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<GridStack | null>(null);
 
@@ -1182,6 +1195,17 @@ export default function PopulationDashboard() {
 
   const [dashboardName, setDashboardName] = useState("My Dashboard");
   const [dashboardDescription, setDashboardDescription] = useState("");
+  const [editingDashboardMeta, setEditingDashboardMeta] = useState(false);
+  const [dashboardNameDraft, setDashboardNameDraft] = useState("My Dashboard");
+  const [dashboardDescriptionDraft, setDashboardDescriptionDraft] =
+    useState("");
+  const [updatingDashboardMeta, setUpdatingDashboardMeta] = useState(false);
+  const [showCreateDashboardModal, setShowCreateDashboardModal] =
+    useState(false);
+  const [creatingDashboard, setCreatingDashboard] = useState(false);
+  const [newDashboardName, setNewDashboardName] = useState("");
+  const [newDashboardDescription, setNewDashboardDescription] = useState("");
+  const [newDashboardDepartment, setNewDashboardDepartment] = useState("");
 
   const [showModal, setShowModal] = useState(false);
   const [selectedChartType, setSelectedChartType] = useState<ChartType>("line");
@@ -1201,6 +1225,17 @@ export default function PopulationDashboard() {
         (dashboard) => dashboard.id === selectedDashboardId,
       ) ?? null,
     [dashboardOptions, selectedDashboardId],
+  );
+  const hasDashboardMetaChanges = useMemo(
+    () =>
+      dashboardNameDraft.trim() !== dashboardName.trim() ||
+      dashboardDescriptionDraft.trim() !== dashboardDescription.trim(),
+    [
+      dashboardDescription,
+      dashboardDescriptionDraft,
+      dashboardName,
+      dashboardNameDraft,
+    ],
   );
   const chartTypeOptions = useMemo(() => {
     const toLabel = (type: string) =>
@@ -1265,41 +1300,66 @@ export default function PopulationDashboard() {
   }, [widgets]);
 
   useEffect(() => {
+    setDashboardNameDraft(dashboardName);
+  }, [dashboardName]);
+
+  useEffect(() => {
+    setDashboardDescriptionDraft(dashboardDescription);
+  }, [dashboardDescription]);
+
+  useEffect(() => {
+    setNewDashboardDepartment(userDepartmentValue);
+  }, [userDepartmentValue]);
+
+  const loadDashboardOptions = useCallback(
+    async (options?: { preserveSelection?: boolean }) => {
+      const preserveSelection = options?.preserveSelection ?? true;
+      const dashboards = await fetchDashboards(currentUser?.role?.name);
+
+      setDashboardOptions(dashboards);
+
+      if (!dashboards.length) {
+        clearSelectedDashboardId();
+        setSelectedDashboardIdState("");
+        setDashboardSelectorOpen(false);
+        return dashboards;
+      }
+
+      const candidateId = preserveSelection
+        ? selectedDashboardId || getSelectedDashboardId()
+        : getSelectedDashboardId();
+      const matchedDashboard = dashboards.find(
+        (dashboard) => dashboard.id === candidateId,
+      );
+
+      if (matchedDashboard) {
+        setSelectedDashboardIdState(matchedDashboard.id);
+        setSelectedDashboardId(matchedDashboard.id);
+        setDashboardSelectorOpen(false);
+        return dashboards;
+      }
+
+      clearSelectedDashboardId();
+      setSelectedDashboardIdState("");
+      setDashboardSelectorOpen(true);
+      return dashboards;
+    },
+    [currentUser?.role?.name, selectedDashboardId],
+  );
+
+  useEffect(() => {
     let cancelled = false;
 
     void (async () => {
       try {
         setLoadingDashboardOptions(true);
 
-        const dashboards = await fetchDashboards(currentUser?.role?.name);
-
         if (cancelled) return;
-
-        setDashboardOptions(dashboards);
-
+        const dashboards = await loadDashboardOptions({ preserveSelection: true });
+        if (cancelled) return;
         if (!dashboards.length) {
-          clearSelectedDashboardId();
-          setSelectedDashboardIdState("");
-          setDashboardSelectorOpen(false);
           toast.error("No dashboards are available for this account.");
-          return;
         }
-
-        const storedDashboardId = getSelectedDashboardId();
-        const matchedDashboard = dashboards.find(
-          (dashboard) => dashboard.id === storedDashboardId,
-        );
-        const nextDashboardId = matchedDashboard?.id ?? "";
-
-        if (nextDashboardId) {
-          setSelectedDashboardIdState(nextDashboardId);
-          setDashboardSelectorOpen(false);
-          return;
-        }
-
-        clearSelectedDashboardId();
-        setSelectedDashboardIdState("");
-        setDashboardSelectorOpen(true);
       } catch (err) {
         if (cancelled) return;
 
@@ -1317,13 +1377,146 @@ export default function PopulationDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser?.role?.name]);
+  }, [loadDashboardOptions]);
 
   const handleDashboardSelectionChange = useCallback((dashboardId: string) => {
     setSelectedDashboardIdState(dashboardId);
     setSelectedDashboardId(dashboardId);
     setDashboardSelectorOpen(false);
   }, []);
+
+  const handleStartDashboardMetaEdit = useCallback(() => {
+    if (!canManageDashboardMeta) return;
+    setDashboardNameDraft(dashboardName);
+    setDashboardDescriptionDraft(dashboardDescription);
+    setEditingDashboardMeta(true);
+  }, [canManageDashboardMeta, dashboardDescription, dashboardName]);
+
+  const handleCancelDashboardMetaEdit = useCallback(() => {
+    setDashboardNameDraft(dashboardName);
+    setDashboardDescriptionDraft(dashboardDescription);
+    setEditingDashboardMeta(false);
+  }, [dashboardDescription, dashboardName]);
+
+  const handleUpdateDashboardMeta = useCallback(async () => {
+    if (!canManageDashboardMeta) return;
+    if (!selectedDashboardId) return;
+
+    const nextName = dashboardNameDraft.trim();
+    const nextDescription = dashboardDescriptionDraft.trim();
+
+    if (!nextName) {
+      toast.error("Dashboard name is required.");
+      return;
+    }
+
+    try {
+      setUpdatingDashboardMeta(true);
+
+      await updateDashboard(selectedDashboardId, {
+        name: nextName,
+        description: nextDescription,
+      });
+
+      setDashboardName(nextName);
+      setDashboardDescription(nextDescription);
+      setEditingDashboardMeta(false);
+
+      const dashboards = await loadDashboardOptions({ preserveSelection: true });
+      const updatedDashboard = dashboards.find(
+        (dashboard) => dashboard.id === selectedDashboardId,
+      );
+
+      if (updatedDashboard) {
+        setDashboardName(updatedDashboard.name || nextName);
+        setDashboardDescription(updatedDashboard.description || nextDescription);
+      }
+
+      toast.success("Dashboard details updated.");
+    } catch (err) {
+      toast.error("Failed to update dashboard: " + (err as Error).message);
+    } finally {
+      setUpdatingDashboardMeta(false);
+    }
+  }, [
+    canManageDashboardMeta,
+    dashboardDescriptionDraft,
+    dashboardNameDraft,
+    loadDashboardOptions,
+    selectedDashboardId,
+  ]);
+
+  const handleCreateDashboard = useCallback(async () => {
+    if (!canManageDashboardMeta) return;
+
+    const department = (isSuperAdmin
+      ? newDashboardDepartment
+      : userDepartmentValue
+    ).trim();
+    const name = newDashboardName.trim();
+    const description = newDashboardDescription.trim();
+
+    if (!department) {
+      toast.error("Department is required.");
+      return;
+    }
+
+    if (!name) {
+      toast.error("Dashboard name is required.");
+      return;
+    }
+
+    try {
+      setCreatingDashboard(true);
+
+      const result = await createDashboard({
+        department,
+        name,
+        description,
+      });
+
+      const createdDashboardId =
+        result?.data?.id || result?.data?.dashboard_id || result?.id;
+      const dashboards = await loadDashboardOptions({ preserveSelection: false });
+
+      let nextDashboardId = "";
+
+      if (createdDashboardId) {
+        nextDashboardId =
+          dashboards.find((dashboard) => dashboard.id === createdDashboardId)?.id ||
+          createdDashboardId;
+      }
+
+      if (!nextDashboardId) {
+        nextDashboardId =
+          dashboards.find((dashboard) => dashboard.name === name)?.id || "";
+      }
+
+      if (nextDashboardId) {
+        handleDashboardSelectionChange(nextDashboardId);
+      }
+
+      setShowCreateDashboardModal(false);
+      setDashboardSelectorOpen(false);
+      setNewDashboardName("");
+      setNewDashboardDescription("");
+      setNewDashboardDepartment(userDepartmentValue);
+      toast.success("Dashboard created successfully.");
+    } catch (err) {
+      toast.error("Failed to create dashboard: " + (err as Error).message);
+    } finally {
+      setCreatingDashboard(false);
+    }
+  }, [
+    canManageDashboardMeta,
+    handleDashboardSelectionChange,
+    isSuperAdmin,
+    loadDashboardOptions,
+    newDashboardDepartment,
+    newDashboardDescription,
+    newDashboardName,
+    userDepartmentValue,
+  ]);
 
   const updateWidgetData = useCallback(
     (id: string, data: QueryRow[], schema?: string[]) => {
@@ -1416,11 +1609,11 @@ export default function PopulationDashboard() {
           <div class="px-4 py-3 border-b border-white/10 font-semibold text-slate-100 flex justify-between items-center gap-3">
             <span class="truncate">${title}</span>
             <div class="relative z-30 flex items-center gap-2">
-              <button class="widget-menu-toggle flex h-8 w-8 items-center justify-center rounded-md border border-white/15 text-slate-200 transition hover:bg-white/10" type="button" aria-label="Widget actions" data-widget-id="${id}">...</button>
+              <button class="widget-menu-toggle flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-white/15 text-slate-200 transition hover:bg-white/10" type="button" aria-label="Widget actions" data-widget-id="${id}">...</button>
               <div class="widget-menu absolute right-0 top-10 z-40 hidden min-w-36 overflow-hidden rounded-lg border border-white/10 bg-slate-900/95 shadow-lg">
-                <button class="export-widget block w-full px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10" type="button" data-widget-id="${id}">Export CSV</button>
+                <button class="export-widget block w-full cursor-pointer px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10" type="button" data-widget-id="${id}">Export CSV</button>
               </div>
-              <button class="delete-widget h-8 w-8 rounded-md border border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200 transition text-sm" type="button">X</button>
+              <button class="delete-widget h-8 w-8 cursor-pointer rounded-md border border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200 transition text-sm" type="button">X</button>
             </div>
           </div>
           <div id="${id}" class="flex-1 min-h-50"></div>
@@ -1967,12 +2160,78 @@ export default function PopulationDashboard() {
           <div className="mb-8 rounded-2xl border border-white/10 bg-slate-900/45 px-6 py-5 shadow-[0_20px_50px_rgba(2,6,23,0.45)] backdrop-blur-xl">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h1 className="text-3xl font-semibold tracking-tight text-slate-100 md:text-4xl">
-                  {dashboardName}
-                </h1>
-                <p className="mt-2 text-sm text-slate-300/90 md:text-base">
-                  {dashboardDescription || "Analytics workspace"}
-                </p>
+                {editingDashboardMeta ? (
+                  <div className="max-w-3xl space-y-3">
+                    <input
+                      value={dashboardNameDraft}
+                      onChange={(e) => setDashboardNameDraft(e.target.value)}
+                      className="w-full rounded-xl border border-cyan-300/20 bg-slate-950/55 px-4 py-3 text-3xl font-semibold tracking-tight text-slate-100 outline-none transition focus:border-cyan-300/40 md:text-4xl"
+                      placeholder="Dashboard name"
+                    />
+                    <textarea
+                      value={dashboardDescriptionDraft}
+                      onChange={(e) =>
+                        setDashboardDescriptionDraft(e.target.value)
+                      }
+                      className="min-h-24 w-full rounded-xl border border-white/10 bg-slate-950/55 px-4 py-3 text-sm text-slate-200 outline-none transition focus:border-cyan-300/35 md:text-base"
+                      placeholder="Dashboard description"
+                    />
+                    <div className="flex flex-wrap gap-3">
+                      <Button
+                        onClick={handleUpdateDashboardMeta}
+                        disabled={
+                          updatingDashboardMeta || !hasDashboardMetaChanges
+                        }
+                        variant="outline"
+                        className="rounded-xl border-cyan-300/30 bg-cyan-500/20 text-cyan-50 hover:bg-cyan-500/30 hover:text-cyan-50 disabled:opacity-50"
+                      >
+                        {updatingDashboardMeta ? "Updating..." : "Update"}
+                      </Button>
+                      <Button
+                        onClick={handleCancelDashboardMetaEdit}
+                        disabled={updatingDashboardMeta}
+                        variant="outline"
+                        className="rounded-xl border-white/10 bg-slate-800/70 text-slate-200 hover:bg-slate-700/70 hover:text-slate-100 disabled:opacity-50"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="max-w-3xl">
+                    {canManageDashboardMeta ? (
+                      <div className="flex flex-col items-start">
+                        <Button
+                          onClick={handleStartDashboardMetaEdit}
+                          variant="ghost"
+                          className="block h-auto p-0 text-left hover:bg-transparent"
+                        >
+                          <h1 className="text-3xl font-semibold tracking-tight text-slate-100 transition hover:text-cyan-100 md:text-4xl">
+                            {dashboardName}
+                          </h1>
+                        </Button>
+                        <Button
+                          onClick={handleStartDashboardMetaEdit}
+                          variant="ghost"
+                          className="mt-2 block h-auto p-0 text-left hover:bg-transparent"
+                        >
+                          <p className="text-sm text-slate-300/90 transition hover:text-slate-100 md:text-base">
+                            {dashboardDescription || "Analytics workspace"}
+                          </p>
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <h1 className="text-3xl font-semibold tracking-tight text-slate-100 md:text-4xl">
+                          {dashboardName}
+                        </h1>
+                        <p className="mt-2 text-sm text-slate-300/90 md:text-base">
+                          {dashboardDescription || "Analytics workspace"}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
                 {selectedDashboardId ? (
                   <div className="mt-4 flex flex-col gap-2 sm:max-w-sm">
                     <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
@@ -2009,34 +2268,48 @@ export default function PopulationDashboard() {
             </div>
 
             <div className="mt-6 flex flex-wrap gap-3">
-              <button
+              {canManageDashboardMeta ? (
+                <Button
+                  onClick={() => setShowCreateDashboardModal(true)}
+                  variant="outline"
+                  className="rounded-xl border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25 hover:text-cyan-100"
+                >
+                  + Create Dashboard
+                </Button>
+              ) : null}
+
+              <Button
                 onClick={() => setShowModal(true)}
-                className="px-5 py-2.5 rounded-xl border border-emerald-400/30 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30 transition shadow-sm"
+                variant="outline"
+                className="rounded-xl border-emerald-400/30 bg-emerald-500/20 text-emerald-100 shadow-sm hover:bg-emerald-500/30 hover:text-emerald-100"
               >
                 + Add Chart
-              </button>
+              </Button>
 
-              <button
+              <Button
                 onClick={saveDashboard}
                 disabled={saving}
-                className="px-5 py-2.5 rounded-xl border border-indigo-300/30 bg-indigo-500/25 text-indigo-50 hover:bg-indigo-500/35 transition disabled:opacity-60"
+                variant="outline"
+                className="rounded-xl border-indigo-300/30 bg-indigo-500/25 text-indigo-50 hover:bg-indigo-500/35 hover:text-indigo-50 disabled:opacity-60"
               >
                 {saving ? "Saving..." : "Save Dashboard"}
-              </button>
+              </Button>
 
-              <button
-                className="px-5 py-2.5 rounded-xl border border-white/15 bg-slate-700/45 text-slate-100 hover:bg-slate-700/65 transition"
+              <Button
+                variant="outline"
+                className="rounded-xl border-white/15 bg-slate-700/45 text-slate-100 hover:bg-slate-700/65 hover:text-slate-100"
                 onClick={() => navigate("/query-builder")}
               >
                 Open Query Builder
-              </button>
+              </Button>
 
-              <Link
-                to="/graphql-playground"
-                className="px-5 py-2.5 rounded-xl border border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25 transition"
+              <Button
+                asChild
+                variant="outline"
+                className="rounded-xl border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25 hover:text-cyan-100"
               >
-                Open GraphQL Playground
-              </Link>
+                <Link to="/graphql-playground">Open GraphQL Playground</Link>
+              </Button>
             </div>
           </div>
 
@@ -2053,6 +2326,15 @@ export default function PopulationDashboard() {
             <p className="mt-2 text-sm text-slate-300">
               Choose a dashboard before entering the analytics workspace.
             </p>
+            {canManageDashboardMeta ? (
+              <Button
+                onClick={() => setShowCreateDashboardModal(true)}
+                variant="outline"
+                className="mt-4 rounded-xl border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25 hover:text-cyan-100"
+              >
+                + Create Dashboard
+              </Button>
+            ) : null}
 
             <div className="mt-6">
               {loadingDashboardOptions ? (
@@ -2098,6 +2380,76 @@ export default function PopulationDashboard() {
                   No dashboards are currently available.
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCreateDashboardModal && canManageDashboardMeta && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900/95 p-6 shadow-2xl">
+            <h2 className="text-xl font-semibold text-slate-100">
+              Create Dashboard
+            </h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Create a new dashboard and switch into it right away.
+            </p>
+
+            <div className="mt-6 space-y-4">
+              <div>
+                <p className="mb-2 text-sm text-slate-300">Department</p>
+                {isSuperAdmin ? (
+                  <input
+                    value={newDashboardDepartment}
+                    onChange={(e) => setNewDashboardDepartment(e.target.value)}
+                    className="w-full rounded-lg border border-white/15 bg-slate-800/90 px-3 py-2.5 text-slate-100 outline-none focus:border-cyan-300/40"
+                    placeholder="finance"
+                  />
+                ) : (
+                  <div className="w-full rounded-lg border border-white/10 bg-slate-800/60 px-3 py-2.5 text-slate-200">
+                    {userDepartmentValue || "No department found"}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <p className="mb-2 text-sm text-slate-300">Name</p>
+                <input
+                  value={newDashboardName}
+                  onChange={(e) => setNewDashboardName(e.target.value)}
+                  className="w-full rounded-lg border border-white/15 bg-slate-800/90 px-3 py-2.5 text-slate-100 outline-none focus:border-cyan-300/40"
+                  placeholder="Dashboard name"
+                />
+              </div>
+
+              <div>
+                <p className="mb-2 text-sm text-slate-300">Description</p>
+                <textarea
+                  value={newDashboardDescription}
+                  onChange={(e) => setNewDashboardDescription(e.target.value)}
+                  className="min-h-28 w-full rounded-lg border border-white/15 bg-slate-800/90 px-3 py-2.5 text-slate-100 outline-none focus:border-cyan-300/40"
+                  placeholder="Dashboard description"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <Button
+                onClick={() => setShowCreateDashboardModal(false)}
+                disabled={creatingDashboard}
+                variant="outline"
+                className="rounded-lg border-white/15 bg-slate-700/70 text-slate-100 hover:bg-slate-700 hover:text-slate-100 disabled:opacity-50"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreateDashboard}
+                disabled={creatingDashboard}
+                variant="outline"
+                className="rounded-lg border-cyan-300/30 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30 hover:text-cyan-100 disabled:opacity-50"
+              >
+                {creatingDashboard ? "Creating..." : "Create Dashboard"}
+              </Button>
             </div>
           </div>
         </div>
@@ -2368,20 +2720,22 @@ export default function PopulationDashboard() {
             </div>
 
             <div className="flex justify-end gap-3">
-              <button
+              <Button
                 onClick={() => setShowModal(false)}
-                className="rounded-lg border border-white/15 bg-slate-700/70 px-4 py-2 text-slate-100 transition hover:bg-slate-700"
+                variant="outline"
+                className="rounded-lg border-white/15 bg-slate-700/70 text-slate-100 hover:bg-slate-700 hover:text-slate-100"
               >
                 Cancel
-              </button>
+              </Button>
 
-              <button
+              <Button
                 disabled={!selectedQueryId}
                 onClick={confirmAddChart}
-                className="rounded-lg border border-emerald-400/30 bg-emerald-500/25 px-4 py-2 text-emerald-100 transition hover:bg-emerald-500/35 disabled:opacity-50"
+                variant="outline"
+                className="rounded-lg border-emerald-400/30 bg-emerald-500/25 text-emerald-100 hover:bg-emerald-500/35 hover:text-emerald-100 disabled:opacity-50"
               >
                 Add Chart
-              </button>
+              </Button>
             </div>
           </div>
         </div>

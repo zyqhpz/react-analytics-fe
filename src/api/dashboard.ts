@@ -10,6 +10,15 @@ type DashboardListResponse = {
   description?: string;
 };
 
+type DashboardMutationPayload = {
+  name: string;
+  description: string;
+};
+
+type CreateDashboardPayload = DashboardMutationPayload & {
+  department: string;
+};
+
 type AdminDashboardListResponse = {
   data?: {
     list?: DashboardSummary[];
@@ -102,6 +111,45 @@ export const fetchDashboard = async (dashboardID: string) => {
 
   if (!res.ok) {
     throw new Error(json.description || "Failed to load dashboard");
+  }
+
+  return json;
+};
+
+export const createDashboard = async (payload: CreateDashboardPayload) => {
+  const res = await fetch(`${API_BASE_URL}/api/v1/dashboards`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  handleUnauthorizedStatus(res.status);
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    throw new Error(json.description || "Failed to create dashboard");
+  }
+
+  return json;
+};
+
+export const updateDashboard = async (
+  dashboardId: string,
+  payload: DashboardMutationPayload,
+) => {
+  const res = await fetch(`${API_BASE_URL}/api/v1/dashboards/${dashboardId}`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  handleUnauthorizedStatus(res.status);
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    throw new Error(json.description || "Failed to update dashboard");
   }
 
   return json;
