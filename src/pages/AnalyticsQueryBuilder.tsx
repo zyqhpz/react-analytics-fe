@@ -21,12 +21,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useAuth } from "@/context/AuthContext";
 import { type Query, type QueryType } from "@/types/query";
 import { useEffect, useState, type MouseEvent } from "react";
 import { FaCheckCircle } from "react-icons/fa";
 import { IoArrowBack } from "react-icons/io5";
 import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format as formatSqlString } from "sql-formatter";
 
@@ -73,6 +74,8 @@ const buildCsvContent = (data: QueryRow[] = []): string => {
 };
 
 export default function App() {
+  const { currentUser } = useAuth();
+  const isViewer = currentUser?.role?.name?.trim().toUpperCase() === "VIEWER";
   const [schema, setSchema] = useState<FullSchema | null>(null);
   const [table, setTable] = useState("");
   const [joins, setJoins] = useState<Join[]>([]);
@@ -117,6 +120,10 @@ export default function App() {
   const [testSuccess, setTestSuccess] = useState(false);
 
   const navigate = useNavigate();
+
+  if (isViewer) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   const isRawQualifiedColumn = (value: string) =>
     /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(value);

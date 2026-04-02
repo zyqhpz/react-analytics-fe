@@ -1172,6 +1172,7 @@ export default function PopulationDashboard() {
   const { currentUser } = useAuth();
   const currentRoleName = normalizeRoleName(currentUser?.role?.name);
   const isSuperAdmin = currentRoleName === "SUPER_ADMIN";
+  const isViewer = currentRoleName === "VIEWER";
   const canManageDashboardMeta = new Set([
     "SUPER_ADMIN",
     "ADMIN",
@@ -1810,6 +1811,11 @@ export default function PopulationDashboard() {
   }, [showModal, selectedQueryId]);
 
   const confirmAddChart = useCallback(async () => {
+    if (isViewer) {
+      toast.error("VIEWER cannot add charts.");
+      return;
+    }
+
     setShowModal(false);
 
     const id = uuidv7();
@@ -1904,6 +1910,7 @@ export default function PopulationDashboard() {
     addWidget,
     getBottomY,
     initChart,
+    isViewer,
     resizeAllCharts,
     setWidgetError,
     setWidgetLoading,
@@ -1914,6 +1921,11 @@ export default function PopulationDashboard() {
   ]);
 
   const saveDashboard = useCallback(async () => {
+    if (isViewer) {
+      toast.error("VIEWER cannot save dashboards.");
+      return;
+    }
+
     const grid = gridRef.current;
     if (!grid || !selectedDashboardId) return;
 
@@ -1962,7 +1974,7 @@ export default function PopulationDashboard() {
     } finally {
       setSaving(false);
     }
-  }, [selectedDashboardId]);
+  }, [isViewer, selectedDashboardId]);
 
   /**
    * Load dashboard configuration + query results from API
@@ -2292,7 +2304,15 @@ export default function PopulationDashboard() {
               ) : null}
 
               <Button
-                onClick={() => setShowModal(true)}
+                onClick={() => {
+                  if (isViewer) {
+                    toast.error("VIEWER cannot add charts.");
+                    return;
+                  }
+
+                  setShowModal(true);
+                }}
+                disabled={isViewer}
                 variant="outline"
                 className="rounded-xl border-emerald-400/30 bg-emerald-500/20 text-emerald-100 shadow-sm hover:bg-emerald-500/30 hover:text-emerald-100"
               >
@@ -2301,7 +2321,7 @@ export default function PopulationDashboard() {
 
               <Button
                 onClick={saveDashboard}
-                disabled={saving}
+                disabled={saving || isViewer}
                 variant="outline"
                 className="rounded-xl border-indigo-300/30 bg-indigo-500/25 text-indigo-50 hover:bg-indigo-500/35 hover:text-indigo-50 disabled:opacity-60"
               >
@@ -2324,7 +2344,15 @@ export default function PopulationDashboard() {
               <Button
                 variant="outline"
                 className="rounded-xl border-white/15 bg-slate-700/45 text-slate-100 hover:bg-slate-700/65 hover:text-slate-100"
-                onClick={() => navigate("/query-builder")}
+                onClick={() => {
+                  if (isViewer) {
+                    toast.error("VIEWER cannot open Query Builder.");
+                    return;
+                  }
+
+                  navigate("/query-builder");
+                }}
+                disabled={isViewer}
               >
                 Open Query Builder
               </Button>
