@@ -1172,9 +1172,11 @@ export default function PopulationDashboard() {
   const { currentUser } = useAuth();
   const currentRoleName = normalizeRoleName(currentUser?.role?.name);
   const isSuperAdmin = currentRoleName === "SUPER_ADMIN";
-  const canManageDashboardMeta = new Set(["SUPER_ADMIN", "ADMIN", "EDITOR"]).has(
-    currentRoleName,
-  );
+  const canManageDashboardMeta = new Set([
+    "SUPER_ADMIN",
+    "ADMIN",
+    "EDITOR",
+  ]).has(currentRoleName);
   const userDepartmentValue =
     currentUser?.department?.slug || currentUser?.department?.name || "";
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1355,7 +1357,9 @@ export default function PopulationDashboard() {
         setLoadingDashboardOptions(true);
 
         if (cancelled) return;
-        const dashboards = await loadDashboardOptions({ preserveSelection: true });
+        const dashboards = await loadDashboardOptions({
+          preserveSelection: true,
+        });
         if (cancelled) return;
         if (!dashboards.length) {
           toast.error("No dashboards are available for this account.");
@@ -1422,14 +1426,18 @@ export default function PopulationDashboard() {
       setDashboardDescription(nextDescription);
       setEditingDashboardMeta(false);
 
-      const dashboards = await loadDashboardOptions({ preserveSelection: true });
+      const dashboards = await loadDashboardOptions({
+        preserveSelection: true,
+      });
       const updatedDashboard = dashboards.find(
         (dashboard) => dashboard.id === selectedDashboardId,
       );
 
       if (updatedDashboard) {
         setDashboardName(updatedDashboard.name || nextName);
-        setDashboardDescription(updatedDashboard.description || nextDescription);
+        setDashboardDescription(
+          updatedDashboard.description || nextDescription,
+        );
       }
 
       toast.success("Dashboard details updated.");
@@ -1449,9 +1457,8 @@ export default function PopulationDashboard() {
   const handleCreateDashboard = useCallback(async () => {
     if (!canManageDashboardMeta) return;
 
-    const department = (isSuperAdmin
-      ? newDashboardDepartment
-      : userDepartmentValue
+    const department = (
+      isSuperAdmin ? newDashboardDepartment : userDepartmentValue
     ).trim();
     const name = newDashboardName.trim();
     const description = newDashboardDescription.trim();
@@ -1477,14 +1484,16 @@ export default function PopulationDashboard() {
 
       const createdDashboardId =
         result?.data?.id || result?.data?.dashboard_id || result?.id;
-      const dashboards = await loadDashboardOptions({ preserveSelection: false });
+      const dashboards = await loadDashboardOptions({
+        preserveSelection: false,
+      });
 
       let nextDashboardId = "";
 
       if (createdDashboardId) {
         nextDashboardId =
-          dashboards.find((dashboard) => dashboard.id === createdDashboardId)?.id ||
-          createdDashboardId;
+          dashboards.find((dashboard) => dashboard.id === createdDashboardId)
+            ?.id || createdDashboardId;
       }
 
       if (!nextDashboardId) {
