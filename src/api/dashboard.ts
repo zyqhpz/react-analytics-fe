@@ -3,20 +3,20 @@ import { getAuthHeaders } from "./client";
 import { handleUnauthorizedStatus } from "./utils";
 
 export const fetchDashboard = async (dashboardID: string) => {
-    const res = await fetch(
-        `${API_BASE_URL}/api/v1/dashboards/${dashboardID}?include_data=true`,
-        {
-            headers: getAuthHeaders(),
-        },
-    );
+  const res = await fetch(
+    `${API_BASE_URL}/api/v1/dashboards/${dashboardID}?include_data=true`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
 
-    handleUnauthorizedStatus(res.status);
+  handleUnauthorizedStatus(res.status);
 
-    const json = await res.json();
+  const json = await res.json();
 
-    if (!res.ok) {
-        throw new Error(json.description);
-    }
+  if (!res.ok) {
+    throw new Error(json.description);
+  }
 
-    return json;
+  return json;
 };

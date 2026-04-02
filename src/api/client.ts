@@ -1,10 +1,10 @@
 import { getSessionToken } from "./utils";
 
 export function getAuthHeaders() {
-    const token = getSessionToken();
+  const token = getSessionToken();
 
-    return {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-    };
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
 }

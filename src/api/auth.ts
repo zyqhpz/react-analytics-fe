@@ -1,101 +1,96 @@
+import { API_BASE_URL, RESET_PASSWORD_ENDPOINT } from "./base";
 import {
-    API_BASE_URL,
-    RESET_PASSWORD_ENDPOINT
-} from "./base";
-import {
-    clearAuthSession,
-    getSessionToken,
-    handleUnauthorizedStatus,
-    parseApiError,
-    setSessionToken,
+  clearAuthSession,
+  getSessionToken,
+  handleUnauthorizedStatus,
+  parseApiError,
+  setSessionToken,
 } from "./utils";
 
 export interface LoginResponse {
-    token: string;
+  token: string;
 }
 
 export interface LoginPayload {
-    email: string;
-    password: string;
+  email: string;
+  password: string;
 }
 
 export interface ResetPasswordPayload {
-    password: string;
-    confirm_password: string;
+  password: string;
+  confirm_password: string;
 }
 
 export async function login({
-    email,
-    password,
+  email,
+  password,
 }: LoginPayload): Promise<string> {
-    const response = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            email,
-            password,
-        }),
-    });
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email,
+      password,
+    }),
+  });
 
-    handleUnauthorizedStatus(response.status);
+  handleUnauthorizedStatus(response.status);
 
-    if (!response.ok) {
-        throw new Error(await parseApiError(response, "Login failed"));
-    }
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Login failed"));
+  }
 
-    const data: LoginResponse = await response.json();
+  const data: LoginResponse = await response.json();
 
-    const token = data.token;
+  const token = data.token;
 
-    setSessionToken(token);
+  setSessionToken(token);
 
-    return token;
+  return token;
 }
 
 export async function logout() {
-    const token = getSessionToken();
-    if (!token) {
-        clearAuthSession();
-        return;
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/v1/auth/logout`, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${token}`,
-        },
-    });
-
-    if (!response.ok && response.status !== 401) {
-        throw new Error(await parseApiError(response, "Logout failed"));
-    }
-
+  const token = getSessionToken();
+  if (!token) {
     clearAuthSession();
+    return;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/logout`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok && response.status !== 401) {
+    throw new Error(await parseApiError(response, "Logout failed"));
+  }
+
+  clearAuthSession();
 }
 
 export async function resetPassword(payload: ResetPasswordPayload) {
-    const token = getSessionToken();
+  const token = getSessionToken();
 
-    if (!token) {
-        throw new Error("You need to log in before resetting your password.");
-    }
+  if (!token) {
+    throw new Error("You need to log in before resetting your password.");
+  }
 
-    const response = await fetch(`${API_BASE_URL}${RESET_PASSWORD_ENDPOINT}`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-    });
+  const response = await fetch(`${API_BASE_URL}${RESET_PASSWORD_ENDPOINT}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
 
-    handleUnauthorizedStatus(response.status);
+  handleUnauthorizedStatus(response.status);
 
-    if (!response.ok) {
-        throw new Error(
-            await parseApiError(response, "Unable to reset password"),
-        );
-    }
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Unable to reset password"));
+  }
 }
