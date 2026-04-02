@@ -354,11 +354,6 @@ export default function UserManagementPage() {
       return;
     }
 
-    if (!availableRoles.includes(nextRole as (typeof availableRoles)[number])) {
-      toast.error("Selected role is not allowed for your account.");
-      return;
-    }
-
     setSavingUserId(editableUser.id);
 
     try {
@@ -369,6 +364,14 @@ export default function UserManagementPage() {
       }
 
       const canUpdateRole = canManageUserRole(userToUpdate, currentRoleName);
+
+      if (
+        canUpdateRole &&
+        !availableRoles.includes(nextRole as (typeof availableRoles)[number])
+      ) {
+        toast.error("Selected role is not allowed for your account.");
+        return;
+      }
 
       await updateUserDetails(editableUser.id, { name: nextName });
 
