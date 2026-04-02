@@ -1,6 +1,7 @@
+import { isAdminOrSuperAdminRole, normalizeRoleName } from "@/api/users";
 import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
-import { ChevronDown, KeyRound, LogOut } from "lucide-react";
+import { ChevronDown, KeyRound, LogOut, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -21,6 +22,9 @@ type CurrentUserBadgeProps = {
 export function CurrentUserBadge({ className }: CurrentUserBadgeProps) {
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
+  const canManageUsers = isAdminOrSuperAdminRole(
+    normalizeRoleName(currentUser?.role?.name),
+  );
 
   const handleLogout = async () => {
     try {
@@ -36,6 +40,10 @@ export function CurrentUserBadge({ className }: CurrentUserBadgeProps) {
 
   const handleChangePasswordRoute = () => {
     navigate("/change-password");
+  };
+
+  const handleUserManagementRoute = () => {
+    navigate("/users");
   };
 
   return (
@@ -72,6 +80,15 @@ export function CurrentUserBadge({ className }: CurrentUserBadgeProps) {
         <DropdownMenuLabel>{currentUser?.name || "Account"}</DropdownMenuLabel>
         <DropdownMenuSeparator className="bg-white/10" />
         <DropdownMenuGroup>
+          {canManageUsers ? (
+            <DropdownMenuItem
+              onClick={handleUserManagementRoute}
+              className="cursor-pointer focus:bg-slate-800 focus:text-white"
+            >
+              <Users />
+              User Management
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem
             onClick={handleChangePasswordRoute}
             className="cursor-pointer focus:bg-slate-800 focus:text-white"

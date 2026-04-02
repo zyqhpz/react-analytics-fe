@@ -5,6 +5,7 @@ import AnalyticsQueryBuilder from "@/pages/AnalyticsQueryBuilder";
 import GraphQLPlayground from "@/pages/GraphQLPlayground";
 import LoginPage from "@/pages/LoginPage";
 import PopulationDashboard from "@/pages/PopulationDashboard";
+import UserManagementPage from "@/pages/UserManagementPage";
 import React from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
@@ -27,6 +28,7 @@ const App: React.FC = () => {
           <Route path="/dashboard" element={<PopulationDashboard />} />
           <Route path="/query-builder" element={<AnalyticsQueryBuilder />} />
           <Route path="/graphql-playground" element={<GraphQLPlayground />} />
+          <Route path="/users" element={<UserManagementPage />} />
         </Route>
         <Route path="*" element={<div>404 - Page Not Found</div>} />
       </Routes>

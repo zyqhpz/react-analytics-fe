@@ -98,6 +98,41 @@ export function clearAuthSession() {
   clearStoredCurrentUser();
 }
 
+function formatApiErrorValue(value: unknown): string {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => formatApiErrorValue(item))
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  if (typeof value === "object") {
+    const objectValues = Object.values(value as Record<string, unknown>)
+      .map((item) => formatApiErrorValue(item))
+      .filter(Boolean);
+
+    if (objectValues.length) {
+      return objectValues.join(", ");
+    }
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+
+  return String(value);
+}
+
 export async function parseApiError(
   response: Response,
   fallbackMessage: string,
@@ -105,11 +140,18 @@ export async function parseApiError(
   try {
     const data = (await response.json()) as {
       description?: string;
-      error?: string;
+      error?: unknown;
       message?: string;
     };
 
-    return data.description || data.error || data.message || fallbackMessage;
+    const description = formatApiErrorValue(data.description);
+    const message = formatApiErrorValue(data.message);
+    const error = formatApiErrorValue(data.error);
+    const parts = [description, message, error].filter(
+      (part, index, allParts) => part && allParts.indexOf(part) === index,
+    );
+
+    return parts.join(": ") || fallbackMessage;
   } catch {
     return fallbackMessage;
   }
