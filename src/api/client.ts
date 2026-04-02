@@ -1,15 +1,7 @@
-import { login } from "./auth";
-import { getWithExpiry } from "./utils";
+import { getSessionToken } from "./utils";
+
 export function getAuthHeaders() {
-    let token = getWithExpiry("token");
-
-    if (!token) {
-        const email = import.meta.env.VITE_USER_EMAIL;
-        const password = import.meta.env.VITE_USER_PASSWORD;
-        login(email, password);
-    }
-
-    token = getWithExpiry("token");
+    const token = getSessionToken();
 
     return {
         "Content-Type": "application/json",

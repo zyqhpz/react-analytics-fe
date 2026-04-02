@@ -1,7 +1,7 @@
 import type { CurrentUser } from "@/types/user";
 import { API_BASE_URL } from "./base";
 import { getAuthHeaders } from "./client";
-import { handleUnauthorizedStatus } from "./utils";
+import { handleUnauthorizedStatus, parseApiError } from "./utils";
 
 type CurrentUserResponse = {
     response_code: number;
@@ -17,11 +17,11 @@ export const fetchCurrentUser = async () => {
 
     handleUnauthorizedStatus(res.status);
 
-    const json: CurrentUserResponse = await res.json();
-
     if (!res.ok) {
-        throw new Error(json.description || "Failed to load current user");
+        throw new Error(await parseApiError(res, "Failed to load current user"));
     }
+
+    const json: CurrentUserResponse = await res.json();
 
     return json.data;
 };

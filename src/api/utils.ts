@@ -3,7 +3,16 @@ import { toast } from "sonner";
 type Token = {
     value: string;
     expiry: number;
-}
+};
+
+const TOKEN_STORAGE_KEY = "auth_token";
+const CURRENT_USER_STORAGE_KEY = "current_user";
+
+export type StoredCurrentUser = {
+    id: string;
+    name: string;
+    email: string;
+};
 
 export function setWithExpiry(key: string, value: string, ttl: number) {
     const now = Date.now();
@@ -13,22 +22,22 @@ export function setWithExpiry(key: string, value: string, ttl: number) {
     const item: Token = {
         value: value,
         expiry: now + ttl,
-    }
-    localStorage.setItem(key, JSON.stringify(item))
+    };
+    sessionStorage.setItem(key, JSON.stringify(item));
 }
 
 export function getWithExpiry(key: string) {
-    const itemStr = localStorage.getItem(key);
+    const itemStr = sessionStorage.getItem(key);
 
     if (!itemStr) return null;
 
     if (itemStr === "undefined") {
-        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
         return null;
     }
 
     if (itemStr === "null") {
-        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
         return null;
     }
 
@@ -38,16 +47,73 @@ export function getWithExpiry(key: string) {
         const now = Date.now(); // local system time in ms
 
         if (now > item.expiry) {
-            localStorage.removeItem(key);
+            sessionStorage.removeItem(key);
             return null;
         }
 
         return item.value;
     } catch (err) {
-        console.error("Invalid localStorage data for key:", key, err);
-        toast.error("Invalid localStorage data for key: " + key);
-        localStorage.removeItem(key);
+        console.error("Invalid sessionStorage data for key:", key, err);
+        toast.error("Invalid session storage data for key: " + key);
+        sessionStorage.removeItem(key);
         return null;
+    }
+}
+
+export function setSessionToken(token: string, ttl = 60 * 60 * 1000) {
+    setWithExpiry(TOKEN_STORAGE_KEY, token, ttl);
+}
+
+export function getSessionToken() {
+    return getWithExpiry(TOKEN_STORAGE_KEY);
+}
+
+export function clearSessionToken() {
+    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
+export function setStoredCurrentUser(user: StoredCurrentUser) {
+    sessionStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
+}
+
+export function getStoredCurrentUser(): StoredCurrentUser | null {
+    const rawValue = sessionStorage.getItem(CURRENT_USER_STORAGE_KEY);
+    if (!rawValue) return null;
+
+    try {
+        return JSON.parse(rawValue) as StoredCurrentUser;
+    } catch (error) {
+        console.error("Invalid sessionStorage data for current user:", error);
+        sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+        return null;
+    }
+}
+
+export function clearStoredCurrentUser() {
+    sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+}
+
+export function clearAuthSession() {
+    clearSessionToken();
+    clearStoredCurrentUser();
+}
+
+export async function parseApiError(response: Response, fallbackMessage: string) {
+    try {
+        const data = (await response.json()) as {
+            description?: string;
+            error?: string;
+            message?: string;
+        };
+
+        return (
+            data.description ||
+            data.error ||
+            data.message ||
+            fallbackMessage
+        );
+    } catch {
+        return fallbackMessage;
     }
 }
 
@@ -59,7 +125,6 @@ export function handleUnauthorizedStatus(status: number) {
     }
 
     hasShownUnauthorizedAlert = true;
-    alert(
-        "Just refresh the application until this message goes away. This is a 'feature' in the app.",
-    );
+    clearAuthSession();
+    toast.error("Your session has expired. Please log in again.");
 }
