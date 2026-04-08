@@ -23,13 +23,6 @@ import { fetchQueryWithData, fetchSavedQueries } from "@/api/queries";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
 import { Button } from "@/components/ui/button";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Pagination,
   PaginationContent,
   PaginationItem,
@@ -37,6 +30,13 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -52,6 +52,7 @@ import {
   type WidgetPosition,
 } from "@/types/dashboard";
 import { type ChartType, type Query, type QueryRow } from "@/types/query";
+import { LayoutDashboard, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 
 type BackendWidget = {
@@ -2367,7 +2368,46 @@ export default function PopulationDashboard() {
             </div>
           </div>
 
-          <div ref={gridContainerRef} className="grid-stack mt-6 pb-8" />
+          <div className="relative mt-6 min-h-80">
+            <div
+              ref={gridContainerRef}
+              className="grid-stack pb-8 data-[empty=true]:opacity-0"
+              data-empty={widgets.length === 0}
+            />
+
+            {refreshingDashboard ? (
+              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border border-white/10 bg-slate-950/70 backdrop-blur-sm">
+                <div className="flex items-center gap-3 rounded-xl border border-cyan-300/20 bg-slate-900/80 px-5 py-4 text-sm text-slate-100 shadow-lg">
+                  <LoaderCircle className="size-5 animate-spin text-cyan-300" />
+                  <div>
+                    <p className="font-medium">Loading dashboard data...</p>
+                    <p className="text-slate-300">
+                      Fetching widgets and refreshing charts.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {!refreshingDashboard &&
+            selectedDashboardId &&
+            widgets.length === 0 ? (
+              <div className="absolute inset-0 flex items-center justify-center rounded-2xl border border-dashed border-white/10 bg-slate-950/40">
+                <div className="max-w-md px-6 text-center">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-300/20 bg-cyan-500/10">
+                    <LayoutDashboard className="size-6 text-cyan-200" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-slate-100">
+                    No widgets added
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-300">
+                    This dashboard is empty right now. Add a chart to start
+                    building your analytics view.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
