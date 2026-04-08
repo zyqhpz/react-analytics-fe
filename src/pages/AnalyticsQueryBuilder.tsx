@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import { useAuth } from "@/context/AuthContext";
 import { type Query, type QueryType } from "@/types/query";
+import { LoaderCircle } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
 import { FaCheckCircle } from "react-icons/fa";
 import { IoArrowBack } from "react-icons/io5";
@@ -130,6 +131,7 @@ export default function App() {
   const [queryDescription, setQueryDescription] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isRunningQuery, setIsRunningQuery] = useState(false);
 
   const [testSuccess, setTestSuccess] = useState(false);
 
@@ -667,35 +669,51 @@ export default function App() {
 
     console.log("Payload:", payload);
 
-    const res = await fetch(`${API_BASE_URL}/api/v1/query/test/${queryType}`, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: JSON.stringify(payload),
-    });
-
-    handleUnauthorizedStatus(res.status);
-
-    const data = await res.json();
-
-    if (res.ok) {
-      setTestSuccess(true);
-      toast.success("Query test successful.");
-      setResults(data.data || []);
-    } else {
+    try {
+      setIsRunningQuery(true);
       setTestSuccess(false);
-      toast.error("Query test failed. Please check your configuration.", {
-        description: (
-          <span className="text-muted-foreground">
-            Status:{" "}
-            <span className="text-red-500 font-semibold">
-              {res.status} {res.statusText}
+      const res = await fetch(
+        `${API_BASE_URL}/api/v1/query/test/${queryType}`,
+        {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify(payload),
+        },
+      );
+
+      handleUnauthorizedStatus(res.status);
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setTestSuccess(true);
+        toast.success("Query test successful.");
+        setResults(data.data || []);
+      } else {
+        setTestSuccess(false);
+        toast.error("Query test failed. Please check your configuration.", {
+          description: (
+            <span className="text-muted-foreground">
+              Status:{" "}
+              <span className="text-red-500 font-semibold">
+                {res.status} {res.statusText}
+              </span>
+              <br />
+              Description: {data?.error || "Unknown error"}
             </span>
-            <br />
-            Description: {data?.error || "Unknown error"}
-          </span>
-        ),
-      });
+          ),
+        });
+        setResults([]);
+      }
+    } catch (error) {
+      setTestSuccess(false);
       setResults([]);
+      toast.error("Unable to run query.", {
+        description:
+          error instanceof Error ? error.message : "Unexpected error.",
+      });
+    } finally {
+      setIsRunningQuery(false);
     }
   };
 
@@ -1703,9 +1721,21 @@ export default function App() {
         <Button
           size="lg"
           onClick={runQuery}
-          className="cursor-pointer hover:scale-105 active:scale-95 transition"
+          disabled={isRunningQuery}
+          className="cursor-pointer hover:scale-105 active:scale-95 transition disabled:hover:scale-100"
         >
-          {queryType === "visual" ? "Run Visual Query" : "Run SQL"}
+          {isRunningQuery ? (
+            <span className="flex items-center gap-2">
+              <LoaderCircle className="size-4 animate-spin" />
+              {queryType === "visual"
+                ? "Running Visual Query..."
+                : "Running SQL..."}
+            </span>
+          ) : queryType === "visual" ? (
+            "Run Visual Query"
+          ) : (
+            "Run SQL"
+          )}
         </Button>
 
         {testSuccess && (
