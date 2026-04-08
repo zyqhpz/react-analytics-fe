@@ -73,6 +73,20 @@ const buildCsvContent = (data: QueryRow[] = []): string => {
   return [header, ...rows].join("\r\n");
 };
 
+const formatResultValue = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value.toLocaleString("en-US", {
+      maximumFractionDigits: 20,
+    });
+  }
+  if (typeof value === "bigint") {
+    return value.toLocaleString("en-US");
+  }
+
+  return String(value);
+};
+
 export default function App() {
   const { currentUser } = useAuth();
   const isViewer = currentUser?.role?.name?.trim().toUpperCase() === "VIEWER";
@@ -1763,7 +1777,7 @@ export default function App() {
                 {results.map((row, i) => (
                   <TableRow key={i} className="hover:bg-muted/40 transition">
                     {Object.values(row).map((v, j) => (
-                      <TableCell key={j}>{String(v)}</TableCell>
+                      <TableCell key={j}>{formatResultValue(v)}</TableCell>
                     ))}
                   </TableRow>
                 ))}
