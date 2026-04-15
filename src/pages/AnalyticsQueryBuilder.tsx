@@ -27,7 +27,14 @@ import { LoaderCircle } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
 import { FaCheckCircle } from "react-icons/fa";
 import { IoArrowBack } from "react-icons/io5";
-import { QueryBuilder, type RuleGroupType } from "react-querybuilder";
+import {
+  QueryBuilder,
+  ValueEditor,
+  type Field,
+  type RuleGroupType,
+  type RuleType,
+  type ValueEditorProps,
+} from "react-querybuilder";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format as formatSqlString } from "sql-formatter";
@@ -75,6 +82,14 @@ const buildCsvContent = (data: QueryRow[] = []): string => {
 };
 
 const NUMERIC_RESULT_PATTERN = /^-?\d+(?:\.\d+)?$/;
+const DATE_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATETIME_INPUT_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
+const DATETIME_INPUT_PLACEHOLDER = "YYYY-MM-DD or YYYY-MM-DD HH:MM:SS";
+
+type QueryBuilderField = Field & {
+  type?: string;
+};
 
 const formatNumericStringWithSeparators = (value: string): string => {
   const trimmed = value.trim();
@@ -104,6 +119,107 @@ const formatResultValue = (value: unknown): string => {
   }
 
   return String(value);
+};
+
+const isValidCalendarDate = (
+  year: number,
+  month: number,
+  day: number,
+): boolean => {
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
+};
+
+const isValidDateTimeInput = (value: string): boolean => {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+
+  const dateMatch = trimmed.match(DATE_INPUT_PATTERN);
+  if (dateMatch) {
+    const [, year, month, day] = dateMatch;
+    return isValidCalendarDate(Number(year), Number(month), Number(day));
+  }
+
+  const dateTimeMatch = trimmed.match(DATETIME_INPUT_PATTERN);
+  if (!dateTimeMatch) return false;
+
+  const [, year, month, day, hours, minutes, seconds] = dateTimeMatch;
+  const numericHours = Number(hours);
+  const numericMinutes = Number(minutes);
+  const numericSeconds = Number(seconds);
+
+  return (
+    isValidCalendarDate(Number(year), Number(month), Number(day)) &&
+    numericHours >= 0 &&
+    numericHours <= 23 &&
+    numericMinutes >= 0 &&
+    numericMinutes <= 59 &&
+    numericSeconds >= 0 &&
+    numericSeconds <= 59
+  );
+};
+
+const getDateTimeRuleValues = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => getDateTimeRuleValues(item))
+      .filter((item) => item.length > 0);
+  }
+
+  const stringValue = String(value ?? "").trim();
+  if (!stringValue) return [];
+
+  return stringValue
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+};
+
+const isValidDateTimeRuleValue = (value: unknown): boolean =>
+  getDateTimeRuleValues(value).every(isValidDateTimeInput);
+
+const DateTimeValueEditor = (props: ValueEditorProps) => {
+  const fieldData = props.fieldData as QueryBuilderField | undefined;
+  const className =
+    typeof props.className === "string" ? props.className : undefined;
+  const isDateTimeField =
+    Boolean(fieldData) &&
+    (fieldData?.type?.toLowerCase().includes("date") ||
+      fieldData?.type?.toLowerCase().includes("time"));
+
+  if (!isDateTimeField || props.type !== "text") {
+    return <ValueEditor {...props} />;
+  }
+
+  const stringValue = Array.isArray(props.value)
+    ? props.value.join(", ")
+    : String(props.value ?? "");
+  const isValid = isValidDateTimeRuleValue(stringValue);
+
+  return (
+    <div className="space-y-1">
+      <input
+        type="text"
+        value={stringValue}
+        onChange={(event) => props.handleOnChange(event.target.value)}
+        placeholder={fieldData?.placeholder || DATETIME_INPUT_PLACEHOLDER}
+        title={DATETIME_INPUT_PLACEHOLDER}
+        className={`${className || ""} ${
+          isValid ? "" : "border-destructive focus-visible:ring-destructive/30"
+        }`}
+      />
+      {!isValid ? (
+        <p className="text-xs text-destructive">
+          Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS only.
+        </p>
+      ) : null}
+    </div>
+  );
 };
 
 export default function App() {
@@ -516,7 +632,25 @@ export default function App() {
 
   const tableSchema = schema?.tables[table];
 
-  const fields = getAllColumns();
+  const fields: QueryBuilderField[] = getAllColumnsWithMeta().map(
+    ({ name, label, type }) => {
+      const isDateField = isDateLikeColumn(type, name);
+
+      return {
+        name,
+        label,
+        type,
+        inputType: "text",
+        ...(isDateField
+          ? {
+              placeholder: DATETIME_INPUT_PLACEHOLDER,
+              validator: (rule: RuleType) =>
+                isValidDateTimeRuleValue(rule.value),
+            }
+          : {}),
+      };
+    },
+  );
 
   const toggleColumn = (column: string) => {
     setSelectedColumns((prev) => {
@@ -675,8 +809,51 @@ export default function App() {
     return true;
   };
 
+  const findInvalidDateTimeRule = (
+    ruleGroup: RuleGroupType,
+  ): { field: string; value: string } | null => {
+    for (const rule of ruleGroup.rules) {
+      if ("rules" in rule) {
+        const invalidNestedRule = findInvalidDateTimeRule(rule);
+        if (invalidNestedRule) return invalidNestedRule;
+        continue;
+      }
+
+      const matchingField = fields.find((field) => field.name === rule.field);
+      if (!matchingField || !isDateLikeColumn(matchingField.type, rule.field)) {
+        continue;
+      }
+
+      const rawValue = Array.isArray(rule.value)
+        ? rule.value.join(", ")
+        : String(rule.value ?? "").trim();
+
+      if (rawValue && !isValidDateTimeRuleValue(rule.value)) {
+        return {
+          field: rule.field,
+          value: rawValue,
+        };
+      }
+    }
+
+    return null;
+  };
+
+  const validateDateTimeFilters = () => {
+    const invalidRule = findInvalidDateTimeRule(query);
+
+    if (!invalidRule) return true;
+
+    toast.error("Invalid datetime filter value.", {
+      description: `${invalidRule.field} must use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS.`,
+    });
+
+    return false;
+  };
+
   const runQuery = async () => {
     if (queryType === "visual" && !validatePivotOptions()) return;
+    if (queryType === "visual" && !validateDateTimeFilters()) return;
     if (queryType === "sql" && !sqlQuery.trim()) {
       toast.error("SQL query is required before testing.");
       return;
@@ -786,6 +963,7 @@ export default function App() {
 
   const saveQuery = async () => {
     if (queryType === "visual" && !validatePivotOptions()) return;
+    if (queryType === "visual" && !validateDateTimeFilters()) return;
     if (queryType === "sql" && !sqlQuery.trim()) {
       toast.error("SQL query is required before saving.");
       return;
@@ -1522,6 +1700,9 @@ export default function App() {
                   fields={fields}
                   query={query}
                   onQueryChange={setQuery}
+                  controlElements={{
+                    valueEditor: DateTimeValueEditor,
+                  }}
                   controlClassnames={{
                     queryBuilder: "space-y-4",
                     ruleGroup:
