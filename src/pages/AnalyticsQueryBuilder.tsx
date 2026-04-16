@@ -41,7 +41,7 @@ import {
   type RuleType,
   type ValueEditorProps,
 } from "react-querybuilder";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { format as formatSqlString } from "sql-formatter";
 
@@ -104,6 +104,16 @@ type ColumnOption = {
   name: string;
   type?: string;
 };
+
+type SharedSqlConfig = {
+  sql: string;
+};
+
+const QUERY_TYPE_SEARCH_PARAM = "queryType";
+const QUERY_CONFIG_SEARCH_PARAM = "config";
+const QUERY_NAME_SEARCH_PARAM = "queryName";
+const QUERY_DESCRIPTION_SEARCH_PARAM = "queryDescription";
+const SAVED_QUERY_ID_SEARCH_PARAM = "savedQueryId";
 
 const formatNumericStringWithSeparators = (value: string): string => {
   const trimmed = value.trim();
@@ -307,6 +317,7 @@ const ThemedOperatorSelector = (props: OperatorSelectorProps) => {
 export default function App() {
   const { currentUser } = useAuth();
   const isViewer = currentUser?.role?.name?.trim().toUpperCase() === "VIEWER";
+  const [searchParams, setSearchParams] = useSearchParams();
   const [schema, setSchema] = useState<FullSchema | null>(null);
   const [table, setTable] = useState("");
   const [joins, setJoins] = useState<Join[]>([]);
@@ -339,6 +350,7 @@ export default function App() {
   const [results, setResults] = useState<QueryRow[]>([]);
 
   const [savedQueries, setSavedQueries] = useState<Query[]>([]);
+  const [hasLoadedSavedQueries, setHasLoadedSavedQueries] = useState(false);
   const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null);
   const [queryType, setQueryType] = useState<QueryType>("visual");
   const [sqlQuery, setSqlQuery] = useState("");
@@ -350,6 +362,8 @@ export default function App() {
   const [isRunningQuery, setIsRunningQuery] = useState(false);
 
   const [testSuccess, setTestSuccess] = useState(false);
+  const [hasInitializedFromUrl, setHasInitializedFromUrl] = useState(false);
+  const [skipNextUrlSync, setSkipNextUrlSync] = useState(false);
 
   const navigate = useNavigate();
 
@@ -473,6 +487,12 @@ export default function App() {
   const isVisualQueryRequest = (value: unknown): value is VisualQueryRequest =>
     typeof value === "object" && value !== null && "table" in value;
 
+  const isSharedSqlConfig = (value: unknown): value is SharedSqlConfig =>
+    typeof value === "object" &&
+    value !== null &&
+    "sql" in value &&
+    typeof value.sql === "string";
+
   const emptyRuleGroup: RuleGroupType = {
     combinator: "and",
     rules: [],
@@ -516,6 +536,43 @@ export default function App() {
     setOrderBy([]);
     setQuery(emptyRuleGroup);
     setHaving(emptyRuleGroup);
+  };
+
+  const applyVisualConfig = (config: VisualQueryRequest) => {
+    setTable(config.table || "");
+    setJoins(config.joins || []);
+    setSelectedColumns(normalizeSelectedColumns(config.select || []));
+    setAggregations(
+      (config.aggregations || []).map((agg: Aggregation) => ({
+        ...agg,
+        alias: agg.alias || "",
+      })),
+    );
+    setGroupBy(config.group_by || []);
+    setGroupByDateField("");
+    setAggregationFunc("");
+    setAggregationField("");
+    setAggregationAliasInput("");
+    const pivot = config.pivot as PivotOptions | undefined;
+    setPivotEnabled(Boolean(pivot?.enabled));
+    setPivotField(pivot?.pivot_field || "");
+    setPivotValueField(pivot?.value_field || "");
+    setPivotFunc(pivot?.func || "");
+    setPivotValues(pivot?.values || []);
+    setPivotValueType("string");
+    setPivotValueInput("");
+    setPivotAliasInput("");
+    setFillMissingDates(Boolean(config.fill_missing_dates));
+    setLimit(config.limit ? String(config.limit) : "");
+    setOrderBy(config.order_by || []);
+    setQuery(toRuleGroup(config.where));
+    setHaving(toRuleGroup(config.having));
+    setSqlQuery("");
+  };
+
+  const applySqlConfig = (sql: string) => {
+    resetVisualBuilderState();
+    setSqlQuery(sql);
   };
 
   const getVisualPayload = (): VisualQueryRequest => {
@@ -662,8 +719,10 @@ export default function App() {
     try {
       const queries = await fetchSavedQueries();
       setSavedQueries(queries);
+      setHasLoadedSavedQueries(true);
       return queries;
     } catch (err) {
+      setHasLoadedSavedQueries(true);
       console.error("Failed to fetch saved queries:", err);
       throw err;
     }
@@ -680,43 +739,13 @@ export default function App() {
     setQueryType(nextQueryType);
 
     if (nextQueryType === "sql") {
-      resetVisualBuilderState();
-      setSqlQuery(getSqlFromQuery(query));
+      applySqlConfig(getSqlFromQuery(query));
     } else {
       const config = parseVisualConfig(query.visual_config);
 
       if (config) {
-        setTable(config.table || "");
-        setJoins(config.joins || []);
-        setSelectedColumns(normalizeSelectedColumns(config.select || []));
-        setAggregations(
-          (config.aggregations || []).map((agg: Aggregation) => ({
-            ...agg,
-            alias: agg.alias || "",
-          })),
-        );
-        setGroupBy(config.group_by || []);
-        setGroupByDateField("");
-        setAggregationFunc("");
-        setAggregationField("");
-        setAggregationAliasInput("");
-        const pivot = config.pivot as PivotOptions | undefined;
-        setPivotEnabled(Boolean(pivot?.enabled));
-        setPivotField(pivot?.pivot_field || "");
-        setPivotValueField(pivot?.value_field || "");
-        setPivotFunc(pivot?.func || "");
-        setPivotValues(pivot?.values || []);
-        setPivotValueType("string");
-        setPivotValueInput("");
-        setPivotAliasInput("");
-        setFillMissingDates(Boolean(config.fill_missing_dates));
-        setLimit(config.limit ? String(config.limit) : "");
-        setOrderBy(config.order_by || []);
-        setQuery(toRuleGroup(config.where));
-        setHaving(toRuleGroup(config.having));
+        applyVisualConfig(config);
       }
-
-      setSqlQuery("");
     }
 
     setQueryName(query.name || "");
@@ -747,7 +776,117 @@ export default function App() {
     setPivotAliasInput("");
     setFillMissingDates(false);
     setLimit("");
+    setResults([]);
+    setTestSuccess(false);
   };
+
+  const resetBuilder = () => {
+    setSelectedQueryId(null);
+    setQueryType("visual");
+    setQueryName("");
+    setQueryDescription("");
+    setSqlQuery("");
+    setResults([]);
+    setTestSuccess(false);
+    setShowDeleteModal(false);
+    resetVisualBuilderState();
+
+    if (schema) {
+      const firstTable = Object.keys(schema.tables)[0] || "";
+      setTable(firstTable);
+    } else {
+      setTable("");
+    }
+
+    setSkipNextUrlSync(true);
+    setSearchParams(new URLSearchParams(), { replace: true });
+  };
+
+  useEffect(() => {
+    if (!schema || !hasLoadedSavedQueries || hasInitializedFromUrl) {
+      return;
+    }
+
+    const queryTypeParam = searchParams.get(QUERY_TYPE_SEARCH_PARAM);
+    const configParam = searchParams.get(QUERY_CONFIG_SEARCH_PARAM);
+    const savedQueryIdParam = searchParams.get(SAVED_QUERY_ID_SEARCH_PARAM);
+    const queryNameParam = searchParams.get(QUERY_NAME_SEARCH_PARAM) || "";
+    const queryDescriptionParam =
+      searchParams.get(QUERY_DESCRIPTION_SEARCH_PARAM) || "";
+
+    const nextQueryType: QueryType =
+      queryTypeParam === "sql" ? "sql" : "visual";
+    const hasUrlState =
+      Boolean(queryTypeParam) ||
+      Boolean(configParam) ||
+      Boolean(savedQueryIdParam) ||
+      Boolean(queryNameParam) ||
+      Boolean(queryDescriptionParam);
+
+    if (!hasUrlState) {
+      setHasInitializedFromUrl(true);
+      return;
+    }
+
+    const matchedSavedQuery = savedQueryIdParam
+      ? savedQueries.find((item) => item.id === savedQueryIdParam) || null
+      : null;
+
+    setSkipNextUrlSync(true);
+    setSelectedQueryId(matchedSavedQuery?.id || null);
+    setQueryName(queryNameParam);
+    setQueryDescription(queryDescriptionParam);
+    setResults([]);
+    setTestSuccess(false);
+
+    if (configParam) {
+      try {
+        const parsedConfig = JSON.parse(configParam) as unknown;
+        setQueryType(nextQueryType);
+
+        if (nextQueryType === "sql") {
+          const sql =
+            typeof parsedConfig === "string"
+              ? parsedConfig
+              : isSharedSqlConfig(parsedConfig)
+                ? parsedConfig.sql
+                : "";
+          applySqlConfig(sql);
+        } else if (isVisualQueryRequest(parsedConfig)) {
+          applyVisualConfig(parsedConfig);
+        } else {
+          throw new Error("Invalid visual query config.");
+        }
+      } catch (error) {
+        toast.error("Unable to load query builder config from URL.", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "The shared link is invalid.",
+        });
+      }
+    } else if (matchedSavedQuery) {
+      loadQuery(matchedSavedQuery);
+    } else {
+      setQueryType(nextQueryType);
+
+      if (nextQueryType === "sql") {
+        applySqlConfig("");
+      } else {
+        resetVisualBuilderState();
+        const firstTable = Object.keys(schema.tables)[0] || "";
+        setTable(firstTable);
+      }
+    }
+
+    setHasInitializedFromUrl(true);
+  }, [
+    hasInitializedFromUrl,
+    hasLoadedSavedQueries,
+    savedQueries,
+    schema,
+    searchParams,
+  ]);
 
   const closeDeleteModal = () => {
     if (isDeleting) return;
@@ -1097,6 +1236,75 @@ export default function App() {
     fillMissingDates,
   ]);
 
+  useEffect(() => {
+    if (!schema || !hasInitializedFromUrl) return;
+
+    if (skipNextUrlSync) {
+      setSkipNextUrlSync(false);
+      return;
+    }
+
+    const nextSearchParams = new URLSearchParams(searchParams);
+    const serializedConfig =
+      queryType === "visual"
+        ? JSON.stringify(getVisualPayload())
+        : JSON.stringify({ sql: sqlQuery });
+
+    nextSearchParams.set(QUERY_TYPE_SEARCH_PARAM, queryType);
+    nextSearchParams.set(QUERY_CONFIG_SEARCH_PARAM, serializedConfig);
+
+    if (selectedQueryId) {
+      nextSearchParams.set(SAVED_QUERY_ID_SEARCH_PARAM, selectedQueryId);
+    } else {
+      nextSearchParams.delete(SAVED_QUERY_ID_SEARCH_PARAM);
+    }
+
+    if (queryName.trim()) {
+      nextSearchParams.set(QUERY_NAME_SEARCH_PARAM, queryName);
+    } else {
+      nextSearchParams.delete(QUERY_NAME_SEARCH_PARAM);
+    }
+
+    if (queryDescription.trim()) {
+      nextSearchParams.set(QUERY_DESCRIPTION_SEARCH_PARAM, queryDescription);
+    } else {
+      nextSearchParams.delete(QUERY_DESCRIPTION_SEARCH_PARAM);
+    }
+
+    const nextSearch = nextSearchParams.toString();
+    const currentSearch = searchParams.toString();
+
+    if (nextSearch !== currentSearch) {
+      setSearchParams(nextSearchParams, { replace: true });
+    }
+  }, [
+    aggregations,
+    fillMissingDates,
+    groupBy,
+    hasInitializedFromUrl,
+    having,
+    joins,
+    limit,
+    orderBy,
+    pivotEnabled,
+    pivotField,
+    pivotFunc,
+    pivotValueField,
+    pivotValues,
+    query,
+    queryDescription,
+    queryName,
+    queryType,
+    schema,
+    searchParams,
+    selectedColumns,
+    selectedQueryId,
+    setSearchParams,
+    skipNextUrlSync,
+    sqlQuery,
+    table,
+  ]);
+
   const saveQuery = async () => {
     if (queryType === "visual" && !validatePivotOptions()) return;
     if (queryType === "visual" && !validateDateTimeFilters()) return;
@@ -1285,6 +1493,14 @@ export default function App() {
               </Button>
             </>
           )}
+
+          <Button
+            variant="outline"
+            onClick={resetBuilder}
+            className="cursor-pointer"
+          >
+            Reset All
+          </Button>
         </CardContent>
       </Card>
 
