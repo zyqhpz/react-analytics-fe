@@ -1,14 +1,12 @@
-import type { DashboardSummary } from "@/types/dashboard";
-import { API_BASE_URL } from "./base";
-import { getAuthHeaders } from "./client";
+import type { DashboardSummary, WidgetPosition } from "@/types/dashboard";
+import type { ChartType, Query } from "@/types/query";
+import { API_BASE_URL, type ResponseApiBase } from "./base";
+import { authFetch } from "./client";
 import { handleUnauthorizedStatus } from "./utils";
 
 const SELECTED_DASHBOARD_STORAGE_KEY = "selected_dashboard_id";
 
-type DashboardListResponse = {
-  data?: DashboardSummary[];
-  description?: string;
-};
+type DashboardListResponse = ResponseApiBase<DashboardSummary[]>;
 
 type DashboardMutationPayload = {
   name: string;
@@ -19,19 +17,28 @@ type CreateDashboardPayload = DashboardMutationPayload & {
   department: string;
 };
 
-type AdminDashboardListResponse = {
-  data?: {
-    list?: DashboardSummary[];
-    meta?: {
-      page: number;
-      size: number;
-      total: number;
-      total_pages: number;
-      has_next: boolean;
-      has_prev: boolean;
-    };
+type AdminDashboardListResponse = ResponseApiBase<{
+  list?: DashboardSummary[];
+  meta?: {
+    page: number;
+    size: number;
+    total: number;
+    total_pages: number;
+    has_next: boolean;
+    has_prev: boolean;
   };
-  description?: string;
+}>;
+
+type DashboardWidgetResponse = {
+  id: string;
+  widget_type: ChartType;
+  position: WidgetPosition;
+  query?: Query;
+};
+
+type DashboardDetail = DashboardSummary & {
+  dashboard_id?: string;
+  widgets?: DashboardWidgetResponse[];
 };
 
 export function isSuperUserRole(roleName?: string | null) {
@@ -59,11 +66,9 @@ export const fetchDashboards = async (roleName?: string | null) => {
     let hasNext = true;
 
     while (hasNext) {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE_URL}/api/v1/dashboards/admin?page=${page}&size=${size}`,
-        {
-          headers: getAuthHeaders(),
-        },
+        {},
       );
 
       handleUnauthorizedStatus(res.status);
@@ -82,9 +87,7 @@ export const fetchDashboards = async (roleName?: string | null) => {
     return dashboards;
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/v1/dashboards`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await authFetch(`${API_BASE_URL}/api/v1/dashboards`);
 
   handleUnauthorizedStatus(res.status);
 
@@ -98,16 +101,14 @@ export const fetchDashboards = async (roleName?: string | null) => {
 };
 
 export const fetchDashboard = async (dashboardID: string) => {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_BASE_URL}/api/v1/dashboards/${dashboardID}?include_data=true`,
-    {
-      headers: getAuthHeaders(),
-    },
+    {},
   );
 
   handleUnauthorizedStatus(res.status);
 
-  const json = await res.json();
+  const json = (await res.json()) as ResponseApiBase<DashboardDetail>;
 
   if (!res.ok) {
     throw new Error(json.description || "Failed to load dashboard");
@@ -117,15 +118,14 @@ export const fetchDashboard = async (dashboardID: string) => {
 };
 
 export const createDashboard = async (payload: CreateDashboardPayload) => {
-  const res = await fetch(`${API_BASE_URL}/api/v1/dashboards`, {
+  const res = await authFetch(`${API_BASE_URL}/api/v1/dashboards`, {
     method: "POST",
-    headers: getAuthHeaders(),
     body: JSON.stringify(payload),
   });
 
   handleUnauthorizedStatus(res.status);
 
-  const json = await res.json();
+  const json = (await res.json()) as ResponseApiBase<DashboardDetail>;
 
   if (!res.ok) {
     throw new Error(json.description || "Failed to create dashboard");
@@ -138,15 +138,17 @@ export const updateDashboard = async (
   dashboardId: string,
   payload: DashboardMutationPayload,
 ) => {
-  const res = await fetch(`${API_BASE_URL}/api/v1/dashboards/${dashboardId}`, {
-    method: "PUT",
-    headers: getAuthHeaders(),
-    body: JSON.stringify(payload),
-  });
+  const res = await authFetch(
+    `${API_BASE_URL}/api/v1/dashboards/${dashboardId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
 
   handleUnauthorizedStatus(res.status);
 
-  const json = await res.json();
+  const json = (await res.json()) as ResponseApiBase<DashboardDetail>;
 
   if (!res.ok) {
     throw new Error(json.description || "Failed to update dashboard");

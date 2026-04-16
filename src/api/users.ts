@@ -1,14 +1,9 @@
 import type { CurrentUser, ManagedUser, PaginationMeta } from "@/types/user";
-import { API_BASE_URL } from "./base";
-import { getAuthHeaders } from "./client";
+import { API_BASE_URL, type ResponseApiBase } from "./base";
+import { authFetch } from "./client";
 import { handleUnauthorizedStatus, parseApiError } from "./utils";
 
-type CurrentUserResponse = {
-  response_code: number;
-  description: string;
-  data: CurrentUser;
-  token?: string;
-};
+type CurrentUserResponse = ResponseApiBase<CurrentUser>;
 
 type CreateUserPayload = {
   department: string;
@@ -40,15 +35,15 @@ type FetchUsersParams = {
   isSuperAdmin: boolean;
 };
 
-type FetchUsersResponse = {
-  description?: string;
-  data?:
-    | ManagedUser[]
-    | {
-        list?: ManagedUser[];
-        users?: ManagedUser[];
-        meta?: Partial<PaginationMeta>;
-      };
+type FetchUsersData =
+  | ManagedUser[]
+  | {
+      list?: ManagedUser[];
+      users?: ManagedUser[];
+      meta?: Partial<PaginationMeta>;
+    };
+
+type FetchUsersResponse = ResponseApiBase<FetchUsersData> & {
   meta?: Partial<PaginationMeta>;
 };
 
@@ -110,9 +105,7 @@ function extractPaginationMeta(
 }
 
 export const fetchCurrentUser = async () => {
-  const res = await fetch(`${API_BASE_URL}/api/v1/users/me`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await authFetch(`${API_BASE_URL}/api/v1/users/me`);
 
   handleUnauthorizedStatus(res.status);
 
@@ -142,9 +135,7 @@ export async function fetchUsers(params: FetchUsersParams) {
   const endpoint = params.isSuperAdmin
     ? "/api/v1/users/admin"
     : "/api/v1/users";
-  const res = await fetch(`${API_BASE_URL}${endpoint}?${searchParams}`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await authFetch(`${API_BASE_URL}${endpoint}?${searchParams}`);
 
   handleUnauthorizedStatus(res.status);
 
@@ -161,9 +152,8 @@ export async function fetchUsers(params: FetchUsersParams) {
 }
 
 export async function createUser(payload: CreateUserPayload) {
-  const res = await fetch(`${API_BASE_URL}/api/v1/users`, {
+  const res = await authFetch(`${API_BASE_URL}/api/v1/users`, {
     method: "POST",
-    headers: getAuthHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -173,16 +163,15 @@ export async function createUser(payload: CreateUserPayload) {
     throw new Error(await parseApiError(res, "Failed to create user"));
   }
 
-  return res.json();
+  return (await res.json()) as ResponseApiBase<unknown>;
 }
 
 export async function updateUserDetails(
   userId: string,
   payload: UpdateUserDetailsPayload,
 ) {
-  const res = await fetch(`${API_BASE_URL}/api/v1/users/${userId}`, {
+  const res = await authFetch(`${API_BASE_URL}/api/v1/users/${userId}`, {
     method: "PUT",
-    headers: getAuthHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -192,16 +181,15 @@ export async function updateUserDetails(
     throw new Error(await parseApiError(res, "Failed to update user"));
   }
 
-  return res.json();
+  return (await res.json()) as ResponseApiBase<unknown>;
 }
 
 export async function updateUserStatus(
   userId: string,
   payload: UpdateUserStatusPayload,
 ) {
-  const res = await fetch(`${API_BASE_URL}/api/v1/users/${userId}/status`, {
+  const res = await authFetch(`${API_BASE_URL}/api/v1/users/${userId}/status`, {
     method: "PUT",
-    headers: getAuthHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -211,13 +199,12 @@ export async function updateUserStatus(
     throw new Error(await parseApiError(res, "Failed to update user status"));
   }
 
-  return res.json();
+  return (await res.json()) as ResponseApiBase<unknown>;
 }
 
 export async function assignUserRole(payload: AssignUserRolePayload) {
-  const res = await fetch(`${API_BASE_URL}/api/v1/roles/assign`, {
+  const res = await authFetch(`${API_BASE_URL}/api/v1/roles/assign`, {
     method: "POST",
-    headers: getAuthHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -227,7 +214,7 @@ export async function assignUserRole(payload: AssignUserRolePayload) {
     throw new Error(await parseApiError(res, "Failed to assign user role"));
   }
 
-  return res.json();
+  return (await res.json()) as ResponseApiBase<unknown>;
 }
 
 export type {

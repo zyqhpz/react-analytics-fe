@@ -1,5 +1,5 @@
 import { API_BASE_URL } from "@/api/base";
-import { getAuthHeaders } from "@/api/client";
+import { authFetch } from "@/api/client";
 import { handleUnauthorizedStatus } from "@/api/utils";
 import * as echarts from "echarts";
 import * as echartsCharts from "echarts/charts";
@@ -1485,8 +1485,7 @@ export default function PopulationDashboard() {
         description,
       });
 
-      const createdDashboardId =
-        result?.data?.id || result?.data?.dashboard_id || result?.id;
+      const createdDashboardId = result?.data?.id || result?.data?.dashboard_id;
       const dashboards = await loadDashboardOptions({
         preserveSelection: false,
       });
@@ -1955,9 +1954,8 @@ export default function PopulationDashboard() {
         widgets,
       };
 
-      const res = await fetch(`${API_BASE_URL}/api/v1/widgets`, {
+      const res = await authFetch(`${API_BASE_URL}/api/v1/widgets`, {
         method: "POST",
-        headers: getAuthHeaders(),
         body: JSON.stringify(payload),
       });
 

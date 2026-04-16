@@ -1,4 +1,5 @@
 import { API_BASE_URL, RESET_PASSWORD_ENDPOINT } from "./base";
+import { authFetch } from "./client";
 import {
   clearAuthSession,
   getSessionToken,
@@ -79,14 +80,13 @@ export async function resetPassword(payload: ResetPasswordPayload) {
     throw new Error("You need to log in before resetting your password.");
   }
 
-  const response = await fetch(`${API_BASE_URL}${RESET_PASSWORD_ENDPOINT}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+  const response = await authFetch(
+    `${API_BASE_URL}${RESET_PASSWORD_ENDPOINT}`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+  );
 
   handleUnauthorizedStatus(response.status);
 

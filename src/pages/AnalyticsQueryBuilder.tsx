@@ -1,5 +1,5 @@
-import { API_BASE_URL } from "@/api/base";
-import { getAuthHeaders } from "@/api/client";
+import { API_BASE_URL, type ResponseApiBase } from "@/api/base";
+import { authFetch } from "@/api/client";
 import { deleteSavedQuery, fetchSavedQueries } from "@/api/queries";
 import { handleUnauthorizedStatus } from "@/api/utils";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
@@ -502,22 +502,12 @@ export default function App() {
 
   // 🔥 Fetch schema from backend
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/v1/query/schemas`, {
-      headers: getAuthHeaders(),
-    })
+    authFetch(`${API_BASE_URL}/api/v1/query/schemas`)
       .then((res) => {
         handleUnauthorizedStatus(res.status);
         return res.json();
       })
-      .then((data) => {
-        // map response to GetSchemasResponse type
-        const typedData: GetSchemasResponse = {
-          responseCode: data.responseCode,
-          description: data.description,
-          data: data.data,
-          token: data.token,
-        };
-
+      .then((typedData: GetSchemasResponse) => {
         setSchema(typedData.data);
         const firstTable = Object.keys(typedData.data.tables)[0];
         setTable(firstTable);
@@ -867,18 +857,17 @@ export default function App() {
     try {
       setIsRunningQuery(true);
       setTestSuccess(false);
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE_URL}/api/v1/query/test/${queryType}`,
         {
           method: "POST",
-          headers: getAuthHeaders(),
           body: JSON.stringify(payload),
         },
       );
 
       handleUnauthorizedStatus(res.status);
 
-      const data = await res.json();
+      const data = (await res.json()) as ResponseApiBase<QueryRow[], unknown>;
 
       if (res.ok) {
         setTestSuccess(true);
@@ -894,7 +883,7 @@ export default function App() {
                 {res.status} {res.statusText}
               </span>
               <br />
-              Description: {data?.error || "Unknown error"}
+              Description: {String(data?.error || "Unknown error")}
             </span>
           ),
         });
@@ -985,16 +974,15 @@ export default function App() {
 
     const method = selectedQueryId ? "PUT" : "POST";
 
-    const res = await fetch(url, {
+    const res = await authFetch(url, {
       method: method,
-      headers: getAuthHeaders(),
       body: JSON.stringify(payload),
     });
 
     handleUnauthorizedStatus(res.status);
 
     if (res.ok) {
-      const data = await res.json();
+      const data = (await res.json()) as ResponseApiBase<Query>;
       const savedQuery = data?.data as Query | undefined;
 
       if (savedQuery?.id) {
@@ -1004,7 +992,7 @@ export default function App() {
       await refreshSavedQueries();
       toast.success("Query saved successfully.");
     } else {
-      const data = await res.json();
+      const data = (await res.json()) as ResponseApiBase<unknown, unknown>;
       toast.error("Failed to save query.", {
         description: (
           <span className="text-muted-foreground">
@@ -1013,7 +1001,7 @@ export default function App() {
               {res.status} {res.statusText}
             </span>
             <br />
-            Description: {data?.error || "Unknown error"}
+            Description: {String(data?.error || "Unknown error")}
           </span>
         ),
       });

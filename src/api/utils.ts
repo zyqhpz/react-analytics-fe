@@ -7,6 +7,7 @@ type Token = {
 
 const TOKEN_STORAGE_KEY = "auth_token";
 const CURRENT_USER_STORAGE_KEY = "current_user";
+const SESSION_TOKEN_TTL = 6 * 60 * 60 * 1000;
 
 export type StoredCurrentUser = {
   id: string;
@@ -60,7 +61,7 @@ export function getWithExpiry(key: string) {
   }
 }
 
-export function setSessionToken(token: string, ttl = 60 * 60 * 1000) {
+export function setSessionToken(token: string, ttl = SESSION_TOKEN_TTL) {
   setWithExpiry(TOKEN_STORAGE_KEY, token, ttl);
 }
 
