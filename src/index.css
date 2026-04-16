@@ -143,3 +143,13 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+.query-builder-theme {
+  --rqb-base-color: #155e75;
+  --rqb-background-color: rgba(8, 47, 73, 0.06);
+  --rqb-border-color: rgba(14, 116, 144, 0.2);
+  --rqb-branch-color: rgba(14, 116, 144, 0.28);
+  --rqb-dnd-drop-indicator-color: #0891b2;
+  --rqb-dnd-drop-indicator-copy-color: #0f766e;
+  --rqb-dnd-drop-indicator-group-color: #0369a1;
+}

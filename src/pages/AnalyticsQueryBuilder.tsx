@@ -1850,7 +1850,7 @@ export default function App() {
             </CardHeader>
 
             <CardContent>
-              <div className="rounded-lg border bg-muted/30 p-4">
+              <div className="query-builder-theme rounded-lg border bg-muted/30 p-4">
                 <QueryBuilder
                   fields={groupedQueryBuilderFields}
                   query={query}
@@ -1868,7 +1868,7 @@ export default function App() {
                     addRule:
                       "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
                     addGroup:
-                      "bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md px-3 py-1 cursor-pointer transition",
+                      "border border-gray-700/80 bg-background text-cyan-900 hover:border-gray-800 hover:bg-cyan-50 rounded-md px-3 py-1 cursor-pointer transition",
                     removeRule:
                       "text-destructive hover:underline cursor-pointer",
                     removeGroup:
@@ -1892,7 +1892,7 @@ export default function App() {
               </CardHeader>
 
               <CardContent>
-                <div className="rounded-lg border bg-muted/30 p-4">
+                <div className="query-builder-theme rounded-lg border bg-muted/30 p-4">
                   <QueryBuilder
                     fields={havingFields}
                     query={having}
@@ -1909,7 +1909,7 @@ export default function App() {
                       addRule:
                         "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
                       addGroup:
-                        "bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md px-3 py-1 cursor-pointer transition",
+                        "border border-gray-700/80 bg-background text-cyan-900 hover:border-gray-800 hover:bg-cyan-50 rounded-md px-3 py-1 cursor-pointer transition",
                       removeRule:
                         "text-destructive hover:underline cursor-pointer",
                       removeGroup:
