@@ -7,6 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -358,6 +366,7 @@ export default function App() {
   const [queryName, setQueryName] = useState("");
   const [queryDescription, setQueryDescription] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSaveBlockedModal, setShowSaveBlockedModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRunningQuery, setIsRunningQuery] = useState(false);
 
@@ -893,6 +902,11 @@ export default function App() {
     setShowDeleteModal(false);
   };
 
+  const closeSaveBlockedModal = () => {
+    if (isRunningQuery) return;
+    setShowSaveBlockedModal(false);
+  };
+
   const tableSchema = schema?.tables[table];
 
   const fields: QueryBuilderField[] = getAllColumnsWithMeta().map(
@@ -1361,6 +1375,15 @@ export default function App() {
         ),
       });
     }
+  };
+
+  const handleSaveButtonClick = () => {
+    if (!testSuccess) {
+      setShowSaveBlockedModal(true);
+      return;
+    }
+
+    void saveQuery();
   };
 
   const handleDeleteQuery = async () => {
@@ -2341,9 +2364,13 @@ export default function App() {
           />
 
           <Button
-            onClick={saveQuery}
-            disabled={!testSuccess}
-            className="cursor-pointer hover:scale-105 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={handleSaveButtonClick}
+            aria-disabled={!testSuccess}
+            className={`transition ${
+              testSuccess
+                ? "cursor-pointer hover:scale-105 active:scale-95"
+                : "cursor-not-allowed opacity-50"
+            }`}
           >
             {selectedQueryId ? "Update Query" : "Save Query"}
           </Button>
@@ -2421,6 +2448,34 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <Dialog
+        open={showSaveBlockedModal && !testSuccess}
+        onOpenChange={(open) => {
+          if (open) {
+            setShowSaveBlockedModal(true);
+            return;
+          }
+
+          closeSaveBlockedModal();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Run the query before saving</DialogTitle>
+            <DialogDescription>
+              {queryType === "visual"
+                ? "Run Visual Query first."
+                : "Run SQL first."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeSaveBlockedModal}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
