@@ -9,10 +9,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
@@ -31,6 +35,8 @@ import {
   QueryBuilder,
   ValueEditor,
   type Field,
+  type FieldSelectorProps,
+  type OperatorSelectorProps,
   type RuleGroupType,
   type RuleType,
   type ValueEditorProps,
@@ -88,6 +94,14 @@ const DATETIME_INPUT_PATTERN =
 const DATETIME_INPUT_PLACEHOLDER = "YYYY-MM-DD or YYYY-MM-DD HH:MM:SS";
 
 type QueryBuilderField = Field & {
+  group?: string;
+  type?: string;
+};
+
+type ColumnOption = {
+  group: string;
+  label: string;
+  name: string;
   type?: string;
 };
 
@@ -219,6 +233,74 @@ const DateTimeValueEditor = (props: ValueEditorProps) => {
         </p>
       ) : null}
     </div>
+  );
+};
+
+const GroupedFieldSelector = (props: FieldSelectorProps) => {
+  const options = props.options as Array<
+    | { label: string; name: string }
+    | {
+        label: string;
+        options: Array<{ label: string; name: string }>;
+      }
+  >;
+
+  const groupedOptions =
+    options.length > 0 && "options" in options[0]
+      ? (options as Array<{
+          label: string;
+          options: Array<{ label: string; name: string }>;
+        }>)
+      : [
+          {
+            label: "Fields",
+            options: options as Array<{ label: string; name: string }>,
+          },
+        ];
+
+  return (
+    <Select value={props.value} onValueChange={props.handleOnChange}>
+      <SelectTrigger className="cursor-pointer hover:border-primary/40 transition">
+        <SelectValue placeholder="Select field" />
+      </SelectTrigger>
+      <SelectContent>
+        {groupedOptions.map((group, groupIndex) => (
+          <div key={group.label}>
+            {groupIndex > 0 ? <SelectSeparator /> : null}
+            <SelectGroup>
+              <SelectLabel>{group.label}</SelectLabel>
+              {group.options.map((option) => (
+                <SelectItem key={option.name} value={option.name}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </div>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+};
+
+const ThemedOperatorSelector = (props: OperatorSelectorProps) => {
+  const options = props.options as Array<{ label: string; name: string }>;
+
+  return (
+    <Select value={props.value} onValueChange={props.handleOnChange}>
+      <SelectTrigger className="min-w-36 cursor-pointer hover:border-primary/40 transition">
+        <SelectValue placeholder="Operator" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          <SelectLabel>Operators</SelectLabel>
+          {options.map((option) => (
+            <SelectItem key={option.name} value={option.name}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
   );
 };
 
@@ -497,8 +579,60 @@ export default function App() {
   };
 
   const getAllColumns = () => {
-    return getAllColumnsWithMeta().map(({ name, label }) => ({ name, label }));
+    return getAllColumnsWithMeta().map(({ name, label, type }) => ({
+      name,
+      label,
+      type,
+      group: getColumnGroupLabel(name),
+    }));
   };
+
+  const getColumnGroupLabel = (value: string) => {
+    if (value.startsWith("DATE(")) {
+      return "Expressions";
+    }
+
+    if (value.includes(".")) {
+      return value.split(".")[0];
+    }
+
+    return table || "Base Table";
+  };
+
+  const groupColumnsByTable = (columns: ColumnOption[]) => {
+    const groups = new Map<string, ColumnOption[]>();
+
+    columns.forEach((column) => {
+      const existing = groups.get(column.group);
+
+      if (existing) {
+        existing.push(column);
+        return;
+      }
+
+      groups.set(column.group, [column]);
+    });
+
+    return Array.from(groups.entries()).map(([group, items]) => ({
+      group,
+      items,
+    }));
+  };
+
+  const renderGroupedSelectItems = (columns: ColumnOption[]) =>
+    groupColumnsByTable(columns).map(({ group, items }, groupIndex) => (
+      <div key={group}>
+        {groupIndex > 0 ? <SelectSeparator /> : null}
+        <SelectGroup>
+          <SelectLabel>{group}</SelectLabel>
+          {items.map((column) => (
+            <SelectItem key={column.name} value={column.name}>
+              {column.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </div>
+    ));
 
   // 🔥 Fetch schema from backend
   useEffect(() => {
@@ -627,6 +761,7 @@ export default function App() {
       const isDateField = isDateLikeColumn(type, name);
 
       return {
+        group: getColumnGroupLabel(name),
         name,
         label,
         type,
@@ -641,6 +776,18 @@ export default function App() {
       };
     },
   );
+
+  const groupedQueryBuilderFields = groupColumnsByTable(
+    fields.map((field) => ({
+      group: field.group || "Fields",
+      label: field.label,
+      name: field.name,
+      type: field.type,
+    })),
+  ).map(({ group, items }) => ({
+    label: group,
+    options: items,
+  }));
 
   const toggleColumn = (column: string) => {
     setSelectedColumns((prev) => {
@@ -1036,14 +1183,18 @@ export default function App() {
       .map((groupField) => ({
         name: groupField,
         label: groupField,
+        group: getColumnGroupLabel(groupField),
       })),
     ...aggregationAliases.map((alias) => ({
       name: alias,
       label: alias,
+      group: "Aggregations",
     })),
   ].filter((field) => hasSelectValue(field.name));
 
-  const dateColumns = getAllColumnsWithMeta().filter(
+  const groupedSelectableColumns = groupColumnsByTable(getAllColumns());
+
+  const dateColumns = getAllColumns().filter(
     (col) => hasSelectValue(col.name) && isDateLikeColumn(col.type, col.name),
   );
 
@@ -1231,50 +1382,64 @@ export default function App() {
             <CardHeader>
               <CardTitle>Select Columns</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {getAllColumns().map((col) => {
-                  const selectedColumn = selectedColumns.find(
-                    (item) => item.name === col.name,
-                  );
-                  const active = Boolean(selectedColumn);
-                  return (
-                    <div
-                      key={col.name}
-                      className={`
-                    space-y-3 rounded-lg border p-3
-                    cursor-pointer transition-all
-                    hover:shadow-sm hover:border-primary/40
-                    ${active ? "bg-primary/5 border-primary/40" : "bg-background"}
-                  `}
-                      onClick={() => toggleColumn(col.name)}
-                    >
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          checked={active}
-                          onCheckedChange={() => toggleColumn(col.name)}
-                          onClick={(e: MouseEvent) => e.stopPropagation()}
-                        />
-                        <label className="text-sm truncate cursor-pointer">
-                          {col.label}
-                        </label>
-                      </div>
-                      {active && (
-                        <input
-                          type="text"
-                          value={selectedColumn?.alias || ""}
-                          onChange={(e) =>
-                            updateSelectedColumnAlias(col.name, e.target.value)
-                          }
-                          onClick={(e) => e.stopPropagation()}
-                          placeholder="Alias (optional)"
-                          className="w-full rounded border px-3 py-2 text-sm"
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+            <CardContent className="space-y-6">
+              {groupedSelectableColumns.map(({ group, items }, groupIndex) => (
+                <div key={group} className="space-y-4">
+                  {groupIndex > 0 ? <Separator /> : null}
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">{group}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {items.length} column{items.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                    {items.map((col) => {
+                      const selectedColumn = selectedColumns.find(
+                        (item) => item.name === col.name,
+                      );
+                      const active = Boolean(selectedColumn);
+                      return (
+                        <div
+                          key={col.name}
+                          className={`
+                        space-y-3 rounded-lg border p-3
+                        cursor-pointer transition-all
+                        hover:shadow-sm hover:border-primary/40
+                        ${active ? "bg-primary/5 border-primary/40" : "bg-background"}
+                      `}
+                          onClick={() => toggleColumn(col.name)}
+                        >
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              checked={active}
+                              onCheckedChange={() => toggleColumn(col.name)}
+                              onClick={(e: MouseEvent) => e.stopPropagation()}
+                            />
+                            <label className="text-sm truncate cursor-pointer">
+                              {col.label}
+                            </label>
+                          </div>
+                          {active && (
+                            <input
+                              type="text"
+                              value={selectedColumn?.alias || ""}
+                              onChange={(e) =>
+                                updateSelectedColumnAlias(
+                                  col.name,
+                                  e.target.value,
+                                )
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                              placeholder="Alias (optional)"
+                              className="w-full rounded border px-3 py-2 text-sm"
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </CardContent>
           </Card>
 
@@ -1284,35 +1449,50 @@ export default function App() {
               <CardTitle>Group By</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                {getAllColumns().map((col) => {
-                  const active = groupBy.includes(col.name);
-                  return (
-                    <div
-                      key={col.name}
-                      className={`
-                    flex items-center space-x-2 rounded-lg border p-3
-                    cursor-pointer transition-all
-                    hover:shadow-sm hover:border-primary/40
-                    ${
-                      active
-                        ? "bg-primary/5 border-primary/40"
-                        : "bg-background"
-                    }
-                  `}
-                      onClick={() => toggleGroupBy(col.name)}
-                    >
-                      <Checkbox
-                        checked={active}
-                        onCheckedChange={() => toggleGroupBy(col.name)}
-                        onClick={(e: MouseEvent) => e.stopPropagation()}
-                      />
-                      <label className="text-sm truncate cursor-pointer">
-                        {col.label}
-                      </label>
+              <div className="mb-4 space-y-6">
+                {groupedSelectableColumns.map(
+                  ({ group, items }, groupIndex) => (
+                    <div key={group} className="space-y-4">
+                      {groupIndex > 0 ? <Separator /> : null}
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">{group}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {items.length} column{items.length === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        {items.map((col) => {
+                          const active = groupBy.includes(col.name);
+                          return (
+                            <div
+                              key={col.name}
+                              className={`
+                          flex items-center space-x-2 rounded-lg border p-3
+                          cursor-pointer transition-all
+                          hover:shadow-sm hover:border-primary/40
+                          ${
+                            active
+                              ? "bg-primary/5 border-primary/40"
+                              : "bg-background"
+                          }
+                        `}
+                              onClick={() => toggleGroupBy(col.name)}
+                            >
+                              <Checkbox
+                                checked={active}
+                                onCheckedChange={() => toggleGroupBy(col.name)}
+                                onClick={(e: MouseEvent) => e.stopPropagation()}
+                              />
+                              <label className="text-sm truncate cursor-pointer">
+                                {col.label}
+                              </label>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  );
-                })}
+                  ),
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -1324,11 +1504,7 @@ export default function App() {
                     <SelectValue placeholder="Datetime field for DATE(...)" />
                   </SelectTrigger>
                   <SelectContent>
-                    {dateColumns.map((col) => (
-                      <SelectItem key={col.name} value={col.name}>
-                        {col.label}
-                      </SelectItem>
-                    ))}
+                    {renderGroupedSelectItems(dateColumns)}
                   </SelectContent>
                 </Select>
 
@@ -1404,18 +1580,17 @@ export default function App() {
                   <option value="MAX">MAX</option>
                 </select>
 
-                <select
+                <Select
                   value={aggregationField}
-                  onChange={(e) => setAggregationField(e.target.value)}
-                  className="border rounded px-3 py-2 cursor-pointer hover:border-primary/40 transition"
+                  onValueChange={setAggregationField}
                 >
-                  <option value="">Field</option>
-                  {getAllColumns().map((col) => (
-                    <option key={col.name} value={col.name}>
-                      {col.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className="min-w-52 cursor-pointer hover:border-primary/40 transition">
+                    <SelectValue placeholder="Field" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {renderGroupedSelectItems(getAllColumns())}
+                  </SelectContent>
+                </Select>
 
                 <input
                   type="text"
@@ -1527,11 +1702,7 @@ export default function App() {
                           <SelectValue placeholder="Select pivot field" />
                         </SelectTrigger>
                         <SelectContent>
-                          {getAllColumns().map((col) => (
-                            <SelectItem key={col.name} value={col.name}>
-                              {col.label}
-                            </SelectItem>
-                          ))}
+                          {renderGroupedSelectItems(getAllColumns())}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1546,11 +1717,7 @@ export default function App() {
                           <SelectValue placeholder="Select value field" />
                         </SelectTrigger>
                         <SelectContent>
-                          {getAllColumns().map((col) => (
-                            <SelectItem key={col.name} value={col.name}>
-                              {col.label}
-                            </SelectItem>
-                          ))}
+                          {renderGroupedSelectItems(getAllColumns())}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1685,10 +1852,12 @@ export default function App() {
             <CardContent>
               <div className="rounded-lg border bg-muted/30 p-4">
                 <QueryBuilder
-                  fields={fields}
+                  fields={groupedQueryBuilderFields}
                   query={query}
                   onQueryChange={setQuery}
                   controlElements={{
+                    fieldSelector: GroupedFieldSelector,
+                    operatorSelector: ThemedOperatorSelector,
                     valueEditor: DateTimeValueEditor,
                   }}
                   controlClassnames={{
@@ -1728,6 +1897,10 @@ export default function App() {
                     fields={havingFields}
                     query={having}
                     onQueryChange={setHaving}
+                    controlElements={{
+                      fieldSelector: GroupedFieldSelector,
+                      operatorSelector: ThemedOperatorSelector,
+                    }}
                     controlClassnames={{
                       queryBuilder: "space-y-4",
                       ruleGroup:
@@ -1785,11 +1958,7 @@ export default function App() {
                   </SelectTrigger>
 
                   <SelectContent>
-                    {orderFields.map((col) => (
-                      <SelectItem key={col.name} value={col.name}>
-                        {col.label}
-                      </SelectItem>
-                    ))}
+                    {renderGroupedSelectItems(orderFields)}
                   </SelectContent>
                 </Select>
               </div>
