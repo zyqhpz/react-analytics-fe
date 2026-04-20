@@ -1,11 +1,24 @@
 import { API_BASE_URL, type ResponseApiBase } from "@/api/base";
 import { authFetch } from "@/api/client";
 import { deleteSavedQuery, fetchSavedQueries } from "@/api/queries";
+import { isSuperUserRole } from "@/api/users";
 import { handleUnauthorizedStatus } from "@/api/utils";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Combobox,
+  ComboboxCollection,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxLabel,
+  ComboboxList,
+  ComboboxSeparator,
+} from "@/components/ui/combobox";
 import {
   Dialog,
   DialogContent,
@@ -324,7 +337,9 @@ const ThemedOperatorSelector = (props: OperatorSelectorProps) => {
 
 export default function App() {
   const { currentUser } = useAuth();
-  const isViewer = currentUser?.role?.name?.trim().toUpperCase() === "VIEWER";
+  const currentRoleName = currentUser?.role?.name;
+  const isViewer = currentRoleName?.trim().toUpperCase() === "VIEWER";
+  const isSuperAdmin = isSuperUserRole(currentRoleName);
   const [searchParams, setSearchParams] = useSearchParams();
   const [schema, setSchema] = useState<FullSchema | null>(null);
   const [table, setTable] = useState("");
@@ -360,6 +375,7 @@ export default function App() {
   const [savedQueries, setSavedQueries] = useState<Query[]>([]);
   const [hasLoadedSavedQueries, setHasLoadedSavedQueries] = useState(false);
   const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null);
+  const [savedQuerySearch, setSavedQuerySearch] = useState("");
   const [queryType, setQueryType] = useState<QueryType>("visual");
   const [sqlQuery, setSqlQuery] = useState("");
 
@@ -726,7 +742,7 @@ export default function App() {
 
   const refreshSavedQueries = async () => {
     try {
-      const queries = await fetchSavedQueries();
+      const queries = await fetchSavedQueries(currentRoleName);
       setSavedQueries(queries);
       setHasLoadedSavedQueries(true);
       return queries;
@@ -737,10 +753,57 @@ export default function App() {
     }
   };
 
+  const groupedSavedQueries = savedQueries.reduce<
+    Array<{ departmentName: string; queries: Query[] }>
+  >((groups, query) => {
+    if (!hasSelectValue(query.id)) {
+      return groups;
+    }
+
+    const departmentName = query.department?.name?.trim() || "No Department";
+    const existingGroup = groups.find(
+      (group) => group.departmentName === departmentName,
+    );
+
+    if (existingGroup) {
+      existingGroup.queries.push(query);
+      return groups;
+    }
+
+    groups.push({
+      departmentName,
+      queries: [query],
+    });
+
+    return groups;
+  }, []);
+  const selectableSavedQueries = savedQueries.filter((q) =>
+    hasSelectValue(q.id),
+  );
+  const normalizedSavedQuerySearch = savedQuerySearch.trim().toLowerCase();
+  const filteredSavedQueries = normalizedSavedQuerySearch
+    ? selectableSavedQueries.filter((query) =>
+        query.name.toLowerCase().includes(normalizedSavedQuerySearch),
+      )
+    : selectableSavedQueries;
+  const filteredGroupedSavedQueries = groupedSavedQueries
+    .map((group) => ({
+      departmentName: group.departmentName,
+      queries: group.queries.filter((query) =>
+        normalizedSavedQuerySearch
+          ? query.name.toLowerCase().includes(normalizedSavedQuerySearch)
+          : true,
+      ),
+    }))
+    .filter((group) => group.queries.length > 0);
+  const selectedSavedQuery =
+    selectableSavedQueries.find((query) => query.id === selectedQueryId) ??
+    null;
+
   // FETCH SAVED QUERIES
   useEffect(() => {
     void refreshSavedQueries();
-  }, []);
+  }, [currentRoleName]);
 
   // LOAD QUERY INTO BUILDER
   const loadQuery = (query: Query) => {
@@ -1474,28 +1537,62 @@ export default function App() {
         </CardHeader>
 
         <CardContent className="flex gap-3">
-          <Select
-            value={selectedQueryId || ""}
-            onValueChange={(value: string) => {
-              setSelectedQueryId(value);
-              const selected = savedQueries.find((q) => q.id === value);
-              if (selected) loadQuery(selected);
+          <Combobox<Query>
+            items={
+              isSuperAdmin
+                ? filteredGroupedSavedQueries.map((group) => ({
+                    departmentName: group.departmentName,
+                    items: group.queries,
+                  }))
+                : filteredSavedQueries
+            }
+            value={selectedSavedQuery}
+            onValueChange={(selectedQuery) => {
+              setSelectedQueryId(selectedQuery?.id ?? null);
+              if (selectedQuery) loadQuery(selectedQuery);
             }}
+            inputValue={savedQuerySearch}
+            onInputValueChange={setSavedQuerySearch}
+            itemToStringLabel={(query) => query.name}
+            itemToStringValue={(query) => query.id}
           >
-            <SelectTrigger className="cursor-pointer hover:border-primary/40 transition w-80">
-              <SelectValue placeholder="Select saved query" />
-            </SelectTrigger>
-
-            <SelectContent>
-              {savedQueries
-                .filter((q) => hasSelectValue(q.id))
-                .map((q) => (
-                  <SelectItem key={q.id} value={q.id}>
-                    {q.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
+            <ComboboxInput
+              placeholder="Search saved query by name"
+              className="w-80"
+              showClear
+            />
+            <ComboboxContent>
+              <ComboboxEmpty>No saved queries found.</ComboboxEmpty>
+              <ComboboxList>
+                {isSuperAdmin ? (
+                  filteredGroupedSavedQueries.map((group, groupIndex) => (
+                    <ComboboxGroup
+                      key={group.departmentName}
+                      items={group.queries}
+                    >
+                      {groupIndex > 0 ? <ComboboxSeparator /> : null}
+                      <ComboboxLabel>{group.departmentName}</ComboboxLabel>
+                      <ComboboxCollection>
+                        {(query: Query) => (
+                          <ComboboxItem key={query.id} value={query}>
+                            {query.name}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxCollection>
+                    </ComboboxGroup>
+                  ))
+                ) : (
+                  <ComboboxCollection>
+                    {(query: Query) => (
+                      <ComboboxItem key={query.id} value={query}>
+                        {query.name}
+                      </ComboboxItem>
+                    )}
+                  </ComboboxCollection>
+                )}
+              </ComboboxList>
+            </ComboboxContent>
+          </Combobox>
 
           {selectedQueryId && (
             <>

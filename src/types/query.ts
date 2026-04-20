@@ -4,11 +4,22 @@ export type QueryRow = Record<string, QueryValue>;
 export type ChartType = string;
 export type QueryType = "visual" | "sql";
 
+export interface QueryDepartment {
+  id: string;
+  name: string;
+  slug?: string;
+  created_at?: string;
+  updated_at?: string;
+  settings?: Record<string, unknown>;
+}
+
 export interface Query {
   id: string;
   data?: QueryRow[];
   name: string;
   description: string;
+  department?: QueryDepartment | null;
+  department_id?: string | null;
   result_schema: string[];
   query_type?: QueryType;
   visual_config?: VisualQueryRequest | null;

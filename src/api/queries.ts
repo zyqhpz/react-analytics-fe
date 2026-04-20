@@ -1,13 +1,17 @@
 import type { FullSchema, Query } from "@/types/query";
 import { API_BASE_URL, type ResponseApiBase } from "./base";
 import { authFetch } from "./client";
+import { isSuperUserRole } from "./users";
 import { handleUnauthorizedStatus } from "./utils";
 
 export type QueryApiResponse = ResponseApiBase<Query | Query[]>;
 export type GetSchemasResponse = ResponseApiBase<FullSchema>;
 
-export const fetchSavedQueries = async () => {
-  const res = await authFetch(`${API_BASE_URL}/api/v1/query`);
+export const fetchSavedQueries = async (roleName?: string | null) => {
+  const endpoint = isSuperUserRole(roleName)
+    ? "/api/v1/query/admin"
+    : "/api/v1/query";
+  const res = await authFetch(`${API_BASE_URL}${endpoint}`);
 
   handleUnauthorizedStatus(res.status);
 
