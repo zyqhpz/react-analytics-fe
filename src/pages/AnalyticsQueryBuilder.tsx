@@ -2475,20 +2475,18 @@ export default function App() {
         </>
       ) : (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-4">
             <CardTitle>Raw SQL</CardTitle>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleFormatSql}
+              className="cursor-pointer"
+            >
+              Format
+            </Button>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleFormatSql}
-                className="cursor-pointer"
-              >
-                Format
-              </Button>
-            </div>
             <textarea
               value={sqlQuery}
               onChange={(e) => setSqlQuery(e.target.value)}
