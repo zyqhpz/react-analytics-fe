@@ -1,5 +1,6 @@
 import { API_BASE_URL, type ResponseApiBase } from "@/api/base";
 import { authFetch } from "@/api/client";
+import { fetchDepartments } from "@/api/departments";
 import { deleteSavedQuery, fetchSavedQueries } from "@/api/queries";
 import { isSuperUserRole } from "@/api/users";
 import { handleUnauthorizedStatus } from "@/api/utils";
@@ -48,6 +49,7 @@ import {
 } from "@/components/ui/table";
 import { useAuth } from "@/context/AuthContext";
 import { type Query, type QueryType } from "@/types/query";
+import type { UserDepartment } from "@/types/user";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
 import { FaCheckCircle } from "react-icons/fa";
@@ -341,6 +343,8 @@ export default function App() {
   const currentRoleName = currentUser?.role?.name;
   const isViewer = currentRoleName?.trim().toUpperCase() === "VIEWER";
   const isSuperAdmin = isSuperUserRole(currentRoleName);
+  const currentDepartmentValue =
+    currentUser?.department?.slug || currentUser?.department?.name || "";
   const [searchParams, setSearchParams] = useSearchParams();
   const [schema, setSchema] = useState<FullSchema | null>(null);
   const [table, setTable] = useState("");
@@ -377,6 +381,8 @@ export default function App() {
   const [hasLoadedSavedQueries, setHasLoadedSavedQueries] = useState(false);
   const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null);
   const [savedQuerySearch, setSavedQuerySearch] = useState("");
+  const [departments, setDepartments] = useState<UserDepartment[]>([]);
+  const [selectedDepartment, setSelectedDepartment] = useState("");
   const [queryType, setQueryType] = useState<QueryType>("visual");
   const [sqlQuery, setSqlQuery] = useState("");
 
@@ -813,6 +819,55 @@ export default function App() {
     void refreshSavedQueries();
   }, [currentRoleName]);
 
+  useEffect(() => {
+    if (!isSuperAdmin) {
+      setDepartments([]);
+      setSelectedDepartment("");
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const nextDepartments = await fetchDepartments();
+        if (cancelled) return;
+
+        setDepartments(nextDepartments);
+        setSelectedDepartment((prev) => {
+          if (
+            prev &&
+            nextDepartments.some((department) => department.slug === prev)
+          ) {
+            return prev;
+          }
+
+          if (
+            currentDepartmentValue &&
+            nextDepartments.some(
+              (department) => department.slug === currentDepartmentValue,
+            )
+          ) {
+            return currentDepartmentValue;
+          }
+
+          return nextDepartments[0]?.slug || "";
+        });
+      } catch (error) {
+        if (cancelled) return;
+
+        toast.error("Failed to load departments.", {
+          description:
+            error instanceof Error ? error.message : "Unexpected error.",
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentDepartmentValue, isSuperAdmin]);
+
   // LOAD QUERY INTO BUILDER
   const loadQuery = (query: Query) => {
     const nextQueryType = query.query_type || "visual";
@@ -830,6 +885,9 @@ export default function App() {
 
     setQueryName(query.name || "");
     setQueryDescription(query.description || "");
+    if (isSuperAdmin) {
+      setSelectedDepartment(query.department?.slug || currentDepartmentValue);
+    }
 
     setResults([]);
     setTestSuccess(false);
@@ -839,6 +897,9 @@ export default function App() {
   const deselectQuery = () => {
     setSelectedQueryId(null);
     setSavedQuerySearch("");
+    if (isSuperAdmin) {
+      setSelectedDepartment(currentDepartmentValue);
+    }
     setQueryType("visual");
     setSqlQuery("");
     setQueryName("");
@@ -864,6 +925,9 @@ export default function App() {
   const resetBuilder = () => {
     setSelectedQueryId(null);
     setSavedQuerySearch("");
+    if (isSuperAdmin) {
+      setSelectedDepartment(currentDepartmentValue);
+    }
     setQueryType("visual");
     setQueryName("");
     setQueryDescription("");
@@ -959,12 +1023,18 @@ export default function App() {
         const firstTable = Object.keys(schema.tables)[0] || "";
         setTable(firstTable);
       }
+
+      if (isSuperAdmin) {
+        setSelectedDepartment(currentDepartmentValue);
+      }
     }
 
     setHasInitializedFromUrl(true);
   }, [
+    currentDepartmentValue,
     hasInitializedFromUrl,
     hasLoadedSavedQueries,
+    isSuperAdmin,
     savedQueries,
     schema,
     searchParams,
@@ -1407,6 +1477,10 @@ export default function App() {
       toast.error("SQL query is required before saving.");
       return;
     }
+    if (isSuperAdmin && !selectedDepartment.trim()) {
+      toast.error("Department is required.");
+      return;
+    }
 
     const config =
       queryType === "visual" ? getVisualPayload() : { sql: sqlQuery.trim() };
@@ -1416,6 +1490,9 @@ export default function App() {
       description: queryDescription,
       query_type: queryType,
       config,
+      ...(isSuperAdmin && selectedDepartment.trim()
+        ? { department: selectedDepartment.trim() }
+        : {}),
     };
 
     const url = selectedQueryId
@@ -2463,6 +2540,27 @@ export default function App() {
         </CardHeader>
 
         <CardContent className="space-y-4">
+          {isSuperAdmin ? (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Department</p>
+              <Select
+                value={selectedDepartment}
+                onValueChange={setSelectedDepartment}
+              >
+                <SelectTrigger className="w-full cursor-pointer hover:border-primary/40 transition">
+                  <SelectValue placeholder="Select department" />
+                </SelectTrigger>
+                <SelectContent>
+                  {departments.map((department) => (
+                    <SelectItem key={department.id} value={department.slug}>
+                      {department.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+
           <input
             type="text"
             placeholder="Query Name"
