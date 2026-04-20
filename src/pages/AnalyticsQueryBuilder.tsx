@@ -117,6 +117,7 @@ const DATETIME_INPUT_PLACEHOLDER = "YYYY-MM-DD or YYYY-MM-DD HH:MM:SS";
 type QueryBuilderField = Field & {
   group?: string;
   type?: string;
+  enumValues?: string[];
 };
 
 type ColumnOption = {
@@ -622,7 +623,12 @@ export default function App() {
     if (!schema || !tableSchema) return [];
 
     const seen = new Set<string>();
-    const columns: { name: string; label: string; type?: string }[] = [];
+    const columns: {
+      name: string;
+      label: string;
+      type?: string;
+      values?: string[];
+    }[] = [];
 
     Object.entries(tableSchema.columns).forEach(
       ([name, columnSchema]: [string, ColumnSchema]) => {
@@ -632,6 +638,7 @@ export default function App() {
             name,
             label: name,
             type: columnSchema.type,
+            values: columnSchema.values,
           });
         }
       },
@@ -651,6 +658,7 @@ export default function App() {
               name: qualified,
               label: qualified,
               type: columnSchema.type,
+              values: columnSchema.values,
             });
           }
         },
@@ -830,6 +838,7 @@ export default function App() {
   // DESELECT QUERY
   const deselectQuery = () => {
     setSelectedQueryId(null);
+    setSavedQuerySearch("");
     setQueryType("visual");
     setSqlQuery("");
     setQueryName("");
@@ -854,6 +863,7 @@ export default function App() {
 
   const resetBuilder = () => {
     setSelectedQueryId(null);
+    setSavedQuerySearch("");
     setQueryType("visual");
     setQueryName("");
     setQueryDescription("");
@@ -973,7 +983,7 @@ export default function App() {
   const tableSchema = schema?.tables[table];
 
   const fields: QueryBuilderField[] = getAllColumnsWithMeta().map(
-    ({ name, label, type }) => {
+    ({ name, label, type, values }) => {
       const isDateField = isDateLikeColumn(type, name);
 
       return {
@@ -981,6 +991,16 @@ export default function App() {
         name,
         label,
         type,
+        enumValues: values,
+        ...(type?.toLowerCase() === "enum" && values?.length
+          ? {
+              valueEditorType: "select" as const,
+              values: values.map((value) => ({
+                name: value,
+                label: value,
+              })),
+            }
+          : {}),
         inputType: "text",
         ...(isDateField
           ? {
@@ -995,10 +1015,8 @@ export default function App() {
 
   const groupedQueryBuilderFields = groupColumnsByTable(
     fields.map((field) => ({
+      ...field,
       group: field.group || "Fields",
-      label: field.label,
-      name: field.name,
-      type: field.type,
     })),
   ).map(({ group, items }) => ({
     label: group,
