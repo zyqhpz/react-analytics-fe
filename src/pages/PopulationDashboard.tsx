@@ -216,42 +216,50 @@ function TableWidgetView({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-950/20">
-      <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
-        <Table className="min-w-full text-slate-100">
-          <TableHeader className="sticky top-0 z-10 bg-slate-900">
-            <TableRow className="border-white/10 hover:bg-transparent">
-              {columns.map((column) => (
-                <TableHead
-                  key={column}
-                  className="bg-slate-900 px-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300"
-                >
-                  {column}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {visibleRows.map((row, index) => (
-              <TableRow
-                key={`${startIndex + index}`}
-                className="border-white/5 odd:bg-white/2"
-              >
+      <div
+        className={`min-h-0 px-3 py-3 ${
+          shouldPaginate
+            ? "flex-1 overflow-y-auto overflow-x-hidden"
+            : "overflow-hidden"
+        }`}
+      >
+        <div>
+          <Table className="min-w-full text-slate-100">
+            <TableHeader className="sticky top-0 z-10 bg-slate-900">
+              <TableRow className="border-white/10 hover:bg-transparent">
                 {columns.map((column) => (
-                  <TableCell
-                    key={`${startIndex + index}-${column}`}
-                    className="px-3 py-2.5 align-top text-sm text-slate-100"
+                  <TableHead
+                    key={column}
+                    className="h-9 bg-slate-900 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300"
                   >
-                    {formatTableValue(row[column])}
-                  </TableCell>
+                    {column}
+                  </TableHead>
                 ))}
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {visibleRows.map((row, index) => (
+                <TableRow
+                  key={`${startIndex + index}`}
+                  className="border-white/5 odd:bg-white/2"
+                >
+                  {columns.map((column) => (
+                    <TableCell
+                      key={`${startIndex + index}-${column}`}
+                      className="px-2.5 py-2 align-top text-sm text-slate-100"
+                    >
+                      {formatTableValue(row[column])}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
       {shouldPaginate ? (
-        <div className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3 text-xs text-slate-300">
+        <div className="flex items-center justify-between gap-3 border-t border-white/10 px-3 py-2 text-xs text-slate-300">
           <span>
             Showing {startIndex + 1}-
             {Math.min(startIndex + visibleRows.length, data.length)} of{" "}
@@ -1231,6 +1239,37 @@ export default function PopulationDashboard() {
       ) ?? null,
     [dashboardOptions, selectedDashboardId],
   );
+  const selectedDashboardDepartmentValue = useMemo(
+    () =>
+      selectedDashboardOption?.department?.slug ||
+      selectedDashboardOption?.department?.name ||
+      selectedDashboardOption?.department_id ||
+      "",
+    [selectedDashboardOption],
+  );
+  const availableQueries = useMemo(() => {
+    if (!isSuperAdmin) {
+      return queries;
+    }
+
+    const normalizedDepartment = selectedDashboardDepartmentValue
+      .trim()
+      .toLowerCase();
+
+    if (!normalizedDepartment) {
+      return [];
+    }
+
+    return queries.filter((query) => {
+      const queryDepartment =
+        query.department?.slug ||
+        query.department?.name ||
+        query.department_id ||
+        "";
+
+      return queryDepartment.trim().toLowerCase() === normalizedDepartment;
+    });
+  }, [isSuperAdmin, queries, selectedDashboardDepartmentValue]);
   const hasDashboardMetaChanges = useMemo(
     () =>
       dashboardNameDraft.trim() !== dashboardName.trim() ||
@@ -1635,6 +1674,20 @@ export default function PopulationDashboard() {
     return wrapper.firstElementChild as HTMLElement;
   }, []);
 
+  const setWidgetBodyMode = useCallback((id: string, type: ChartType) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    el.classList.remove("flex-1", "min-h-50", "min-h-0", "h-full", "h-auto");
+
+    if (type === "table") {
+      el.classList.add("h-full", "min-h-0");
+      return;
+    }
+
+    el.classList.add("flex-1", "min-h-50");
+  }, []);
+
   /**
    * Initialize chart instance
    * Chart now renders directly from API query.data
@@ -1645,6 +1698,7 @@ export default function PopulationDashboard() {
       if (!el) return;
 
       destroyChart(id);
+      setWidgetBodyMode(id, type);
 
       if (type === "table") {
         const root = createRoot(el);
@@ -1666,63 +1720,71 @@ export default function PopulationDashboard() {
         observer,
       };
     },
-    [destroyChart],
+    [destroyChart, setWidgetBodyMode],
   );
 
-  const setWidgetLoading = useCallback((id: string, type: ChartType) => {
-    const el = document.getElementById(id);
-    if (!el) return;
+  const setWidgetLoading = useCallback(
+    (id: string, type: ChartType) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      setWidgetBodyMode(id, type);
 
-    if (type === "table") {
-      const existingRoot = chartsRef.current[id]?.root;
-      const root = existingRoot ?? createRoot(el);
-      root.render(
-        <div className="flex h-full items-center justify-center px-6 text-sm text-slate-300">
-          Running query...
-        </div>,
-      );
-      chartsRef.current[id] = { type, root };
-      return;
-    }
-
-    chartsRef.current[id]?.instance?.showLoading({
-      text: "Running query...",
-    });
-  }, []);
-
-  const setWidgetError = useCallback((id: string, type: ChartType) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-
-    if (type === "table") {
-      const existingRoot = chartsRef.current[id]?.root;
-
-      if (existingRoot) {
-        existingRoot.render(
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm font-medium text-rose-300">
-            Query failed
-          </div>,
-        );
-      } else {
-        const root = createRoot(el);
+      if (type === "table") {
+        const existingRoot = chartsRef.current[id]?.root;
+        const root = existingRoot ?? createRoot(el);
         root.render(
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm font-medium text-rose-300">
-            Query failed
+          <div className="flex h-full items-center justify-center px-6 text-sm text-slate-300">
+            Running query...
           </div>,
         );
         chartsRef.current[id] = { type, root };
+        return;
       }
-      return;
-    }
 
-    chartsRef.current[id]?.instance?.setOption({
-      title: {
-        text: "Query Failed",
-        left: "center",
-        textStyle: { color: "#f87171" },
-      },
-    });
-  }, []);
+      chartsRef.current[id]?.instance?.showLoading({
+        text: "Running query...",
+      });
+    },
+    [setWidgetBodyMode],
+  );
+
+  const setWidgetError = useCallback(
+    (id: string, type: ChartType) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      setWidgetBodyMode(id, type);
+
+      if (type === "table") {
+        const existingRoot = chartsRef.current[id]?.root;
+
+        if (existingRoot) {
+          existingRoot.render(
+            <div className="flex h-full items-center justify-center px-6 text-center text-sm font-medium text-rose-300">
+              Query failed
+            </div>,
+          );
+        } else {
+          const root = createRoot(el);
+          root.render(
+            <div className="flex h-full items-center justify-center px-6 text-center text-sm font-medium text-rose-300">
+              Query failed
+            </div>,
+          );
+          chartsRef.current[id] = { type, root };
+        }
+        return;
+      }
+
+      chartsRef.current[id]?.instance?.setOption({
+        title: {
+          text: "Query Failed",
+          left: "center",
+          textStyle: { color: "#f87171" },
+        },
+      });
+    },
+    [setWidgetBodyMode],
+  );
 
   const addWidget = useCallback(
     (opts: {
@@ -1763,13 +1825,22 @@ export default function PopulationDashboard() {
 
     (async () => {
       try {
-        const q = await fetchSavedQueries();
+        const q = await fetchSavedQueries(currentUser?.role?.name);
         setQueries(q);
       } catch (err) {
         toast.error("Failed to load queries: " + (err as Error).message);
       }
     })();
-  }, [showModal]);
+  }, [currentUser?.role?.name, showModal]);
+
+  useEffect(() => {
+    if (!selectedQueryId) return;
+
+    if (!availableQueries.some((query) => query.id === selectedQueryId)) {
+      setSelectedQueryId("");
+      setSelectedQueryPreview(null);
+    }
+  }, [availableQueries, selectedQueryId]);
 
   useEffect(() => {
     if (!showModal || !selectedQueryId) {
@@ -2564,17 +2635,36 @@ export default function PopulationDashboard() {
               >
                 <option value="">Select Query</option>
 
-                {queries.map((q) => (
+                {availableQueries.map((q) => (
                   <option key={q.id} value={q.id}>
                     {q.name}
                   </option>
                 ))}
               </select>
+              {showModal && availableQueries.length === 0 ? (
+                <p className="mt-2 text-xs text-slate-400">
+                  {isSuperAdmin
+                    ? `No saved queries found for ${selectedDashboardOption?.department?.name || "this dashboard department"}.`
+                    : "No saved queries available."}
+                </p>
+              ) : null}
             </div>
 
             <div className="mb-6">
-              <p className="mb-2 text-sm text-slate-300">Chart Type</p>
-              <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-sm text-slate-300">Chart Type</p>
+                {loadingQueryPreview ? (
+                  <span className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-100">
+                    <LoaderCircle className="size-3 animate-spin" />
+                    Matching query shape...
+                  </span>
+                ) : null}
+              </div>
+              <div
+                className={`grid grid-cols-2 gap-2 transition md:grid-cols-3 ${
+                  loadingQueryPreview ? "pointer-events-none opacity-70" : ""
+                }`}
+              >
                 {chartTypeOptions.map((chartTypeOption) => {
                   const isSelected =
                     selectedChartType === chartTypeOption.value;
@@ -2627,7 +2717,11 @@ export default function PopulationDashboard() {
               </p>
             </div>
 
-            <div className="mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4">
+            <div
+              className={`mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4 transition ${
+                loadingQueryPreview ? "animate-pulse" : ""
+              }`}
+            >
               <div className="mb-2 flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-100">
                   Data Requirements
@@ -2702,7 +2796,11 @@ export default function PopulationDashboard() {
               ) : null}
             </div>
 
-            <div className="mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4">
+            <div
+              className={`mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4 transition ${
+                loadingQueryPreview ? "animate-pulse" : ""
+              }`}
+            >
               <div className="mb-2 flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-100">
                   Chart Preview
