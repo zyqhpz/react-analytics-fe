@@ -371,6 +371,7 @@ export default function App() {
   const [limit, setLimit] = useState("");
   const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
   const [results, setResults] = useState<QueryRow[]>([]);
+  const [resultsPageSize, setResultsPageSize] = useState("25");
   const [resolvedResultsTable, setResolvedResultsTable] =
     useState<ResolvedDataTableModel>({
       columns: [],
@@ -2608,20 +2609,42 @@ export default function App() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <CardTitle>Results</CardTitle>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={exportResultsToCsv}
-              className="cursor-pointer"
-            >
-              Export to CSV
-            </Button>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Rows per page
+                </span>
+                <Select
+                  value={resultsPageSize}
+                  onValueChange={setResultsPageSize}
+                >
+                  <SelectTrigger className="w-24">
+                    <SelectValue placeholder="Size" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                    <SelectItem value="200">200</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={exportResultsToCsv}
+                className="cursor-pointer"
+              >
+                Export to CSV
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <DataTable
               data={results}
               formatValue={formatResultValue}
-              pageSize={50}
+              pageSize={Number(resultsPageSize)}
               paginationThreshold={50}
               classes={{
                 row: "hover:bg-muted/40 transition",
