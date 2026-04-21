@@ -1197,6 +1197,13 @@ export default function App() {
   }, [joins]);
 
   const aggregationAliases = aggregations.map(getAggregationAlias);
+  const pivotAliases = Array.from(
+    new Set(
+      pivotValues
+        .map((pivotValue) => pivotValue.alias.trim())
+        .filter(hasSelectValue),
+    ),
+  );
 
   const effectiveSelectColumns: SelectedColumn[] = [
     ...selectedColumns,
@@ -1578,6 +1585,11 @@ export default function App() {
       name: alias,
       label: alias,
       group: "Aggregations",
+    })),
+    ...pivotAliases.map((alias) => ({
+      name: alias,
+      label: alias,
+      group: "Pivot Aliases",
     })),
   ].filter((field) => hasSelectValue(field.name));
 
