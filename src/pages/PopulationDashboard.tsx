@@ -1732,7 +1732,7 @@ export default function PopulationDashboard() {
               <button class="delete-widget h-8 w-8 cursor-pointer rounded-md border border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200 transition text-sm" type="button">X</button>
             </div>
           </div>
-          <div class="relative flex-1 min-h-0">
+          <div class="relative flex flex-1 min-h-0 flex-col">
             <div id="${id}" class="flex-1 min-h-50"></div>
             <div data-widget-status="${id}" class="pointer-events-none absolute inset-0 z-10 hidden"></div>
           </div>
@@ -1747,10 +1747,17 @@ export default function PopulationDashboard() {
     const el = document.getElementById(id);
     if (!el) return;
 
-    el.classList.remove("flex-1", "min-h-50", "min-h-0", "h-full", "h-auto");
+    el.classList.remove(
+      "flex-1",
+      "min-h-50",
+      "min-h-0",
+      "h-full",
+      "h-auto",
+      "w-full",
+    );
 
     if (type === "table") {
-      el.classList.add("h-full", "min-h-0");
+      el.classList.add("h-full", "w-full", "min-h-0");
       return;
     }
 
