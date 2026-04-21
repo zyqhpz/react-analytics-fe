@@ -5,7 +5,14 @@ import * as echarts from "echarts";
 import * as echartsCharts from "echarts/charts";
 import { GridStack, type GridStackNode, type GridStackWidget } from "gridstack";
 import "gridstack/dist/gridstack.min.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Link, useNavigate } from "react-router-dom";
 import { v7 as uuidv7 } from "uuid";
@@ -38,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -68,6 +76,7 @@ type ChartsMeta = {
   type: ChartType;
   observer?: ResizeObserver;
   root?: Root;
+  statusRoot?: Root;
 };
 
 type WidgetMeta = {
@@ -1264,7 +1273,8 @@ export default function PopulationDashboard() {
   const [selectedChartType, setSelectedChartType] = useState<ChartType>("line");
 
   const [saving, setSaving] = useState(false);
-  const [refreshingDashboard, setRefreshingDashboard] = useState(false);
+  const [loadingDashboardStructure, setLoadingDashboardStructure] =
+    useState(false);
 
   const [queries, setQueries] = useState<Query[]>([]);
   const [selectedQueryId, setSelectedQueryId] = useState<string>("");
@@ -1681,6 +1691,7 @@ export default function PopulationDashboard() {
     meta.observer?.disconnect?.();
     meta.instance?.dispose?.();
     meta.root?.unmount?.();
+    meta.statusRoot?.unmount?.();
     delete chartsRef.current[id];
   }, []);
 
@@ -1721,7 +1732,10 @@ export default function PopulationDashboard() {
               <button class="delete-widget h-8 w-8 cursor-pointer rounded-md border border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200 transition text-sm" type="button">X</button>
             </div>
           </div>
-          <div id="${id}" class="flex-1 min-h-50"></div>
+          <div class="relative flex-1 min-h-0">
+            <div id="${id}" class="flex-1 min-h-50"></div>
+            <div data-widget-status="${id}" class="pointer-events-none absolute inset-0 z-10 hidden"></div>
+          </div>
         </div>
       </div>
     `;
@@ -1741,6 +1755,50 @@ export default function PopulationDashboard() {
     }
 
     el.classList.add("flex-1", "min-h-50");
+  }, []);
+
+  const renderWidgetStatus = useCallback(
+    (
+      id: string,
+      content: ReactNode,
+      className = "bg-slate-950/72 backdrop-blur-[2px]",
+    ) => {
+      const statusEl = document.querySelector<HTMLElement>(
+        `[data-widget-status="${id}"]`,
+      );
+
+      if (!statusEl) return;
+
+      statusEl.className = `pointer-events-none absolute inset-0 z-10 flex items-center justify-center ${className}`;
+
+      const existingStatusRoot = chartsRef.current[id]?.statusRoot;
+      const statusRoot = existingStatusRoot ?? createRoot(statusEl);
+      statusRoot.render(content);
+
+      const existingMeta = chartsRef.current[id];
+
+      if (existingMeta) {
+        existingMeta.statusRoot = statusRoot;
+        return;
+      }
+
+      chartsRef.current[id] = {
+        type: chartsRef.current[id]?.type ?? "bar",
+        statusRoot,
+      };
+    },
+    [],
+  );
+
+  const clearWidgetStatus = useCallback((id: string) => {
+    const statusEl = document.querySelector<HTMLElement>(
+      `[data-widget-status="${id}"]`,
+    );
+
+    if (!statusEl) return;
+
+    statusEl.className = "pointer-events-none absolute inset-0 z-10 hidden";
+    chartsRef.current[id]?.statusRoot?.render(null);
   }, []);
 
   /**
@@ -1783,24 +1841,20 @@ export default function PopulationDashboard() {
       const el = document.getElementById(id);
       if (!el) return;
       setWidgetBodyMode(id, type);
-
-      if (type === "table") {
-        const existingRoot = chartsRef.current[id]?.root;
-        const root = existingRoot ?? createRoot(el);
-        root.render(
-          <div className="flex h-full items-center justify-center px-6 text-sm text-slate-300">
-            Running query...
-          </div>,
-        );
-        chartsRef.current[id] = { type, root };
-        return;
-      }
-
-      chartsRef.current[id]?.instance?.showLoading({
-        text: "Running query...",
-      });
+      renderWidgetStatus(
+        id,
+        <div className="flex items-center gap-3 rounded-xl border border-cyan-300/20 bg-slate-900/88 px-4 py-3 text-sm text-slate-100 shadow-lg">
+          <Spinner className="size-4 text-cyan-300" />
+          <div>
+            <p className="font-medium">Running query...</p>
+            <p className="text-xs text-slate-300">
+              Loading this widget&apos;s data.
+            </p>
+          </div>
+        </div>,
+      );
     },
-    [setWidgetBodyMode],
+    [renderWidgetStatus, setWidgetBodyMode],
   );
 
   const setWidgetError = useCallback(
@@ -1809,28 +1863,18 @@ export default function PopulationDashboard() {
       if (!el) return;
       setWidgetBodyMode(id, type);
 
-      if (type === "table") {
-        const existingRoot = chartsRef.current[id]?.root;
+      renderWidgetStatus(
+        id,
+        <div className="rounded-xl border border-rose-400/30 bg-slate-950/88 px-4 py-3 text-center text-sm font-medium text-rose-200 shadow-lg">
+          Query failed
+        </div>,
+        "bg-slate-950/76 backdrop-blur-[2px]",
+      );
 
-        if (existingRoot) {
-          existingRoot.render(
-            <div className="flex h-full items-center justify-center px-6 text-center text-sm font-medium text-rose-300">
-              Query failed
-            </div>,
-          );
-        } else {
-          const root = createRoot(el);
-          root.render(
-            <div className="flex h-full items-center justify-center px-6 text-center text-sm font-medium text-rose-300">
-              Query failed
-            </div>,
-          );
-          chartsRef.current[id] = { type, root };
-        }
+      if (type === "table") {
         return;
       }
 
-      chartsRef.current[id]?.instance?.hideLoading();
       chartsRef.current[id]?.instance?.setOption({
         title: {
           text: "Query Failed",
@@ -1839,7 +1883,7 @@ export default function PopulationDashboard() {
         },
       });
     },
-    [setWidgetBodyMode],
+    [renderWidgetStatus, setWidgetBodyMode],
   );
 
   const renderWidgetResult = useCallback(
@@ -1853,11 +1897,12 @@ export default function PopulationDashboard() {
         }
 
         if (type === "table") {
+          clearWidgetStatus(id);
           initChart(id, type, data, schema);
           return;
         }
 
-        meta.instance?.hideLoading();
+        clearWidgetStatus(id);
         meta.instance?.resize();
         meta.instance?.setOption(buildOption(type, data, schema), {
           notMerge: true,
@@ -1866,7 +1911,7 @@ export default function PopulationDashboard() {
 
       applyData();
     },
-    [initChart],
+    [clearWidgetStatus, initChart],
   );
 
   const addWidget = useCallback(
@@ -2121,7 +2166,7 @@ export default function PopulationDashboard() {
         dashboardLoadRequestRef.current !== requestId;
 
       try {
-        setRefreshingDashboard(true);
+        setLoadingDashboardStructure(true);
         const [result, widgetsResult] = await Promise.all([
           fetchDashboard(dashboardId, { signal: abortController.signal }),
           fetchDashboardWidgets(dashboardId, {
@@ -2220,6 +2265,10 @@ export default function PopulationDashboard() {
 
           resizeAllCharts();
         });
+
+        if (!abortController.signal.aborted && !isStaleRequest()) {
+          setLoadingDashboardStructure(false);
+        }
 
         const widgetIdsByQueryId = new Map<string, string[]>();
 
@@ -2335,7 +2384,7 @@ export default function PopulationDashboard() {
         }
 
         if (!abortController.signal.aborted && !isStaleRequest()) {
-          setRefreshingDashboard(false);
+          setLoadingDashboardStructure(false);
         }
       }
     },
@@ -2609,11 +2658,13 @@ export default function PopulationDashboard() {
                     ? void loadDashboardFromAPI(selectedDashboardId)
                     : undefined
                 }
-                disabled={!selectedDashboardId || refreshingDashboard}
+                disabled={!selectedDashboardId || loadingDashboardStructure}
                 variant="outline"
                 className="rounded-xl border-amber-300/30 bg-amber-500/15 text-amber-100 hover:bg-amber-500/25 hover:text-amber-100 disabled:opacity-60"
               >
-                {refreshingDashboard ? "Refreshing..." : "Refresh Dashboard"}
+                {loadingDashboardStructure
+                  ? "Refreshing..."
+                  : "Refresh Dashboard"}
               </Button>
 
               <Button
@@ -2649,21 +2700,21 @@ export default function PopulationDashboard() {
               data-empty={widgets.length === 0}
             />
 
-            {refreshingDashboard ? (
+            {loadingDashboardStructure ? (
               <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border border-white/10 bg-slate-950/70 backdrop-blur-sm">
                 <div className="flex items-center gap-3 rounded-xl border border-cyan-300/20 bg-slate-900/80 px-5 py-4 text-sm text-slate-100 shadow-lg">
-                  <LoaderCircle className="size-5 animate-spin text-cyan-300" />
+                  <Spinner className="size-5 text-cyan-300" />
                   <div>
                     <p className="font-medium">Loading dashboard data...</p>
                     <p className="text-slate-300">
-                      Fetching widgets and refreshing charts.
+                      Fetching dashboard metadata and widget layout.
                     </p>
                   </div>
                 </div>
               </div>
             ) : null}
 
-            {!refreshingDashboard &&
+            {!loadingDashboardStructure &&
             selectedDashboardId &&
             widgets.length === 0 ? (
               <div className="absolute inset-0 flex items-center justify-center rounded-2xl border border-dashed border-white/10 bg-slate-950/40">
