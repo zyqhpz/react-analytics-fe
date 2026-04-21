@@ -29,15 +29,8 @@ import {
 } from "@/api/dashboard";
 import { fetchQueryWithData, fetchSavedQueries } from "@/api/queries";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
+import { DataTable } from "@/components/DataTable";
 import { Button } from "@/components/ui/button";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination";
 import {
   Select,
   SelectContent,
@@ -46,14 +39,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { useAuth } from "@/context/AuthContext";
 import {
   type DashboardSummary,
@@ -194,7 +179,6 @@ const buildCsvContent = (data: QueryRow[] = [], schema?: string[]): string => {
   return [header, ...rows].join("\r\n");
 };
 
-const TABLE_PAGE_SIZE = 25;
 const DASHBOARD_QUERY_CONCURRENCY = 2;
 
 const isAbortError = (error: unknown) =>
@@ -237,115 +221,44 @@ function TableWidgetView({
   data: QueryRow[];
   schema?: string[];
 }) {
-  const columns = useMemo(() => getColumns(data, schema), [data, schema]);
-  const [page, setPage] = useState(1);
-  const shouldPaginate = data.length > TABLE_PAGE_SIZE;
-
-  useEffect(() => {
-    setPage(1);
-  }, [data, schema]);
-
-  const totalPages = shouldPaginate
-    ? Math.max(1, Math.ceil(data.length / TABLE_PAGE_SIZE))
-    : 1;
-  const currentPage = shouldPaginate ? Math.min(page, totalPages) : 1;
-  const startIndex = shouldPaginate ? (currentPage - 1) * TABLE_PAGE_SIZE : 0;
-  const visibleRows = shouldPaginate
-    ? data.slice(startIndex, startIndex + TABLE_PAGE_SIZE)
-    : data;
-
-  if (!data.length) {
-    return (
-      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-300">
-        No data available.
-      </div>
-    );
-  }
-
   return (
-    <div className="flex h-full min-h-0 flex-col bg-slate-950/20">
-      <div
-        className={`min-h-0 px-3 py-3 ${
-          shouldPaginate
-            ? "flex-1 overflow-y-auto overflow-x-hidden"
-            : "overflow-hidden"
-        }`}
-      >
-        <div>
-          <Table className="min-w-full text-slate-100">
-            <TableHeader className="sticky top-0 z-10 bg-slate-900">
-              <TableRow className="border-white/10 hover:bg-transparent">
-                {columns.map((column) => (
-                  <TableHead
-                    key={column}
-                    className="h-9 bg-slate-900 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300"
-                  >
-                    {column}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleRows.map((row, index) => (
-                <TableRow
-                  key={`${startIndex + index}`}
-                  className="border-white/5 odd:bg-white/2"
-                >
-                  {columns.map((column) => (
-                    <TableCell
-                      key={`${startIndex + index}-${column}`}
-                      className="px-2.5 py-2 align-top text-sm text-slate-100"
-                    >
-                      {formatTableValue(row[column])}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+    <DataTable
+      data={data}
+      columns={getColumns(data, schema)}
+      formatValue={formatTableValue}
+      pageSize={25}
+      paginationThreshold={25}
+      emptyMessage={
+        <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-300">
+          No data available.
         </div>
-      </div>
-
-      {shouldPaginate ? (
-        <div className="flex items-center justify-between gap-3 border-t border-white/10 px-3 py-2 text-xs text-slate-300">
-          <span>
-            Showing {startIndex + 1}-
-            {Math.min(startIndex + visibleRows.length, data.length)} of{" "}
-            {data.length}
-          </span>
-
-          <Pagination className="mx-0 w-auto justify-end">
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                  className="border border-white/10 bg-slate-900/70 text-slate-100 hover:bg-slate-800 disabled:opacity-40"
-                />
-              </PaginationItem>
-              <PaginationItem>
-                <PaginationLink
-                  isActive
-                  disabled
-                  className="border border-cyan-400/30 bg-cyan-500/10 text-cyan-100"
-                >
-                  {currentPage} / {totalPages}
-                </PaginationLink>
-              </PaginationItem>
-              <PaginationItem>
-                <PaginationNext
-                  onClick={() =>
-                    setPage((prev) => Math.min(totalPages, prev + 1))
-                  }
-                  disabled={currentPage === totalPages}
-                  className="border border-white/10 bg-slate-900/70 text-slate-100 hover:bg-slate-800 disabled:opacity-40"
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        </div>
-      ) : null}
-    </div>
+      }
+      classes={{
+        container: "flex h-full min-h-0 flex-col bg-slate-950/20",
+        tableWrapper:
+          "min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3",
+        table: "min-w-full text-slate-100",
+        header: "sticky top-0 z-10 bg-slate-900",
+        headerRow: "border-white/10 hover:bg-transparent",
+        headerCell:
+          "h-9 bg-slate-900 px-2.5 text-[11px] font-semibold text-slate-300",
+        headerButton:
+          "cursor-pointer select-none text-left font-semibold uppercase tracking-[0.18em] text-slate-300 transition hover:text-slate-100",
+        row: "border-white/5 odd:bg-white/2",
+        cell: "px-2.5 py-2 align-top text-sm text-slate-100",
+        paginationContainer:
+          "flex items-center justify-between gap-3 border-t border-white/10 px-3 py-2 text-xs text-slate-300",
+        paginationText: "",
+        paginationPrevious:
+          "border border-white/10 bg-slate-900/70 text-slate-100 hover:bg-slate-800 disabled:opacity-40",
+        paginationCurrent:
+          "border border-cyan-400/30 bg-cyan-500/10 text-cyan-100",
+        paginationNext:
+          "border border-white/10 bg-slate-900/70 text-slate-100 hover:bg-slate-800 disabled:opacity-40",
+        emptyState:
+          "flex h-full items-center justify-center px-6 text-center text-sm text-slate-300",
+      }}
+    />
   );
 }
 

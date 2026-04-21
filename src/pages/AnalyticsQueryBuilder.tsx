@@ -5,6 +5,7 @@ import { deleteSavedQuery, fetchSavedQueries } from "@/api/queries";
 import { isSuperUserRole } from "@/api/users";
 import { handleUnauthorizedStatus } from "@/api/utils";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
+import { DataTable, type ResolvedDataTableModel } from "@/components/DataTable";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -39,14 +40,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { useAuth } from "@/context/AuthContext";
 import { type Query, type QueryType } from "@/types/query";
 import type { UserDepartment } from "@/types/user";
@@ -98,8 +91,10 @@ const toCsvValue = (value: unknown): string => {
   return stringValue;
 };
 
-const buildCsvContent = (data: QueryRow[] = []): string => {
-  const columns = getResultColumns(data);
+const buildCsvContent = (
+  data: QueryRow[] = [],
+  columns: string[] = getResultColumns(data),
+): string => {
   if (!columns.length) return "";
 
   const header = columns.map(toCsvValue).join(",");
@@ -376,6 +371,11 @@ export default function App() {
   const [limit, setLimit] = useState("");
   const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
   const [results, setResults] = useState<QueryRow[]>([]);
+  const [resolvedResultsTable, setResolvedResultsTable] =
+    useState<ResolvedDataTableModel>({
+      columns: [],
+      rows: [],
+    });
 
   const [savedQueries, setSavedQueries] = useState<Query[]>([]);
   const [hasLoadedSavedQueries, setHasLoadedSavedQueries] = useState(false);
@@ -1360,7 +1360,10 @@ export default function App() {
   };
 
   const exportResultsToCsv = () => {
-    const csv = buildCsvContent(results);
+    const csv = buildCsvContent(
+      resolvedResultsTable.rows,
+      resolvedResultsTable.columns,
+    );
 
     if (!csv) {
       toast.error("No results available to export.");
@@ -2615,26 +2618,19 @@ export default function App() {
             </Button>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {Object.keys(results[0]).map((k) => (
-                    <TableHead key={k} className="cursor-default">
-                      {k}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {results.map((row, i) => (
-                  <TableRow key={i} className="hover:bg-muted/40 transition">
-                    {Object.values(row).map((v, j) => (
-                      <TableCell key={j}>{formatResultValue(v)}</TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataTable
+              data={results}
+              formatValue={formatResultValue}
+              pageSize={50}
+              paginationThreshold={50}
+              classes={{
+                row: "hover:bg-muted/40 transition",
+                paginationContainer:
+                  "mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
+                paginationText: "text-sm text-muted-foreground",
+              }}
+              onResolvedModelChange={setResolvedResultsTable}
+            />
           </CardContent>
         </Card>
       )}
