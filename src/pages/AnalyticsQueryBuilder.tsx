@@ -40,6 +40,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { useAuth } from "@/context/AuthContext";
 import { type Query, type QueryType } from "@/types/query";
 import type { UserDepartment } from "@/types/user";
@@ -128,11 +136,32 @@ type SharedSqlConfig = {
   sql: string;
 };
 
+type FilterReferenceSection = {
+  title: string;
+  description: string;
+  rows: Array<{
+    value: string;
+    indicator: string;
+  }>;
+};
+
 const QUERY_TYPE_SEARCH_PARAM = "queryType";
 const QUERY_CONFIG_SEARCH_PARAM = "config";
 const QUERY_NAME_SEARCH_PARAM = "queryName";
 const QUERY_DESCRIPTION_SEARCH_PARAM = "queryDescription";
 const SAVED_QUERY_ID_SEARCH_PARAM = "savedQueryId";
+
+const FILTER_REFERENCE_SECTIONS: FilterReferenceSection[] = [
+  {
+    title: "source_id",
+    description:
+      "Multi-source analytics data can come from different underlying databases.",
+    rows: [
+      { value: "1", indicator: "leanx" },
+      { value: "2", indicator: "payright" },
+    ],
+  },
+];
 
 const formatNumericStringWithSeparators = (value: string): string => {
   const trimmed = value.trim();
@@ -1732,6 +1761,63 @@ export default function App() {
           >
             Reset All
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden border-cyan-200/50 bg-linear-to-br from-cyan-50/80 via-white to-slate-50">
+        <CardHeader className="border-cyan-100/80 bg-white/55">
+          <CardTitle className="text-base tracking-tight">
+            Filter Reference
+          </CardTitle>
+          <p className="text-sm leading-6 text-muted-foreground">
+            Quick lookup for hardcoded filter values used by the analytics
+            layer.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {FILTER_REFERENCE_SECTIONS.map((section) => (
+            <div
+              key={section.title}
+              className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/85"
+            >
+              <div className="border-b border-slate-100 bg-linear-to-r from-cyan-50/80 to-transparent px-4 py-3.5">
+                <h2 className="text-base font-semibold tracking-tight text-slate-900">
+                  {section.title}
+                </h2>
+                <p className="mt-1.5 text-sm leading-6 text-slate-600">
+                  {section.description}
+                </p>
+              </div>
+
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-100 bg-slate-50/90 hover:bg-slate-50/90">
+                    <TableHead className="w-30 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                      Value
+                    </TableHead>
+                    <TableHead className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                      Indicator
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {section.rows.map((row) => (
+                    <TableRow
+                      key={`${section.title}-${row.value}`}
+                      className="border-slate-100 hover:bg-transparent"
+                    >
+                      <TableCell className="px-4 py-3.5 font-semibold text-slate-900">
+                        {row.value}
+                      </TableCell>
+                      <TableCell className="px-4 py-3.5 font-medium text-slate-700">
+                        {row.indicator}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ))}
         </CardContent>
       </Card>
 
