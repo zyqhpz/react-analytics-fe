@@ -6,6 +6,7 @@ import { handleUnauthorizedStatus } from "./utils";
 
 export type QueryApiResponse = ResponseApiBase<Query | Query[]>;
 export type GetSchemasResponse = ResponseApiBase<FullSchema>;
+type RequestOptions = Pick<RequestInit, "signal">;
 
 export const fetchSavedQueries = async (roleName?: string | null) => {
   const endpoint = isSuperUserRole(roleName)
@@ -24,8 +25,14 @@ export const fetchSavedQueries = async (roleName?: string | null) => {
   return (json.data as Query[]) || [];
 };
 
-export const fetchQueryWithData = async (queryId: string) => {
-  const res = await authFetch(`${API_BASE_URL}/api/v1/query/${queryId}/run`);
+export const fetchQueryWithData = async (
+  queryId: string,
+  options: RequestOptions = {},
+) => {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/v1/query/${queryId}/run`,
+    options,
+  );
 
   handleUnauthorizedStatus(res.status);
 

@@ -1,5 +1,5 @@
 import type { DashboardSummary, WidgetPosition } from "@/types/dashboard";
-import type { ChartType, Query } from "@/types/query";
+import type { ChartType } from "@/types/query";
 import { API_BASE_URL, type ResponseApiBase } from "./base";
 import { authFetch } from "./client";
 import { handleUnauthorizedStatus } from "./utils";
@@ -30,16 +30,21 @@ type AdminDashboardListResponse = ResponseApiBase<{
 }>;
 
 type DashboardWidgetResponse = {
+  config?: Record<string, unknown>;
+  created_at?: string;
+  dashboard_id?: string;
   id: string;
+  query_id?: string;
+  updated_at?: string;
   widget_type: ChartType;
   position: WidgetPosition;
-  query?: Query;
 };
 
 type DashboardDetail = DashboardSummary & {
   dashboard_id?: string;
-  widgets?: DashboardWidgetResponse[];
 };
+
+type RequestOptions = Pick<RequestInit, "signal">;
 
 export function isSuperUserRole(roleName?: string | null) {
   const normalizedRole = roleName?.trim().toUpperCase();
@@ -100,10 +105,13 @@ export const fetchDashboards = async (roleName?: string | null) => {
   return json.data ?? [];
 };
 
-export const fetchDashboard = async (dashboardID: string) => {
+export const fetchDashboard = async (
+  dashboardID: string,
+  options: RequestOptions = {},
+) => {
   const res = await authFetch(
-    `${API_BASE_URL}/api/v1/dashboards/${dashboardID}?include_data=true`,
-    {},
+    `${API_BASE_URL}/api/v1/dashboards/${dashboardID}`,
+    options,
   );
 
   handleUnauthorizedStatus(res.status);
@@ -112,6 +120,26 @@ export const fetchDashboard = async (dashboardID: string) => {
 
   if (!res.ok) {
     throw new Error(json.description || "Failed to load dashboard");
+  }
+
+  return json;
+};
+
+export const fetchDashboardWidgets = async (
+  dashboardID: string,
+  options: RequestOptions = {},
+) => {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/v1/dashboards/${dashboardID}/widgets`,
+    options,
+  );
+
+  handleUnauthorizedStatus(res.status);
+
+  const json = (await res.json()) as ResponseApiBase<DashboardWidgetResponse[]>;
+
+  if (!res.ok) {
+    throw new Error(json.description || "Failed to load dashboard widgets");
   }
 
   return json;

@@ -14,6 +14,7 @@ import {
   clearSelectedDashboardId,
   createDashboard,
   fetchDashboard,
+  fetchDashboardWidgets,
   fetchDashboards,
   getSelectedDashboardId,
   setSelectedDashboardId,
@@ -59,7 +60,7 @@ type BackendWidget = {
   id: string;
   widget_type: ChartType;
   position: WidgetPosition;
-  query?: Query;
+  query_id?: string;
 };
 
 type ChartsMeta = {
@@ -87,6 +88,10 @@ type QueryPreview = {
   data: QueryRow[];
   schema?: string[];
 };
+
+type QueryExecutionResult =
+  | { status: "fulfilled"; query: Query }
+  | { status: "rejected"; error: Error };
 
 type QueryShapeSummary = {
   fieldCount: number;
@@ -181,6 +186,40 @@ const buildCsvContent = (data: QueryRow[] = [], schema?: string[]): string => {
 };
 
 const TABLE_PAGE_SIZE = 25;
+const DASHBOARD_QUERY_CONCURRENCY = 2;
+
+const isAbortError = (error: unknown) =>
+  error instanceof DOMException && error.name === "AbortError";
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (!items.length) return [];
+
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const worker = async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+
+      if (currentIndex >= items.length) {
+        return;
+      }
+
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+
+  return results;
+}
 
 function TableWidgetView({
   data,
@@ -1196,6 +1235,8 @@ export default function PopulationDashboard() {
   const chartsRef = useRef<Record<string, ChartsMeta>>({});
   const widgetsMetaRef = useRef<Record<string, WidgetMeta>>({});
   const widgetsRef = useRef<DashboardWidget[]>([]);
+  const dashboardLoadRequestRef = useRef(0);
+  const dashboardLoadAbortRef = useRef<AbortController | null>(null);
 
   const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
   const [dashboardOptions, setDashboardOptions] = useState<DashboardSummary[]>(
@@ -1585,6 +1626,20 @@ export default function PopulationDashboard() {
     [],
   );
 
+  const updateWidgetTitle = useCallback((id: string, title: string) => {
+    setWidgets((prev) =>
+      prev.map((widget) => (widget.id === id ? { ...widget, title } : widget)),
+    );
+
+    const titleElement = document.querySelector<HTMLElement>(
+      `[data-widget-title="${id}"]`,
+    );
+
+    if (titleElement) {
+      titleElement.textContent = title;
+    }
+  }, []);
+
   const exportWidgetCsv = useCallback((id: string) => {
     const widget = widgetsRef.current.find((item) => item.id === id);
     if (!widget) {
@@ -1657,7 +1712,7 @@ export default function PopulationDashboard() {
       <div class="grid-stack-item">
         <div class="grid-stack-item-content overflow-hidden rounded-2xl border border-white/10 bg-slate-900/45 shadow-[0_20px_45px_rgba(2,6,23,0.45)] backdrop-blur-xl flex flex-col">
           <div class="px-4 py-3 border-b border-white/10 font-semibold text-slate-100 flex justify-between items-center gap-3">
-            <span class="truncate">${title}</span>
+            <span class="truncate" data-widget-title="${id}">${title}</span>
             <div class="relative z-30 flex items-center gap-2">
               <button class="widget-menu-toggle flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-white/15 text-slate-200 transition hover:bg-white/10" type="button" aria-label="Widget actions" data-widget-id="${id}">...</button>
               <div class="widget-menu absolute right-0 top-10 z-40 hidden min-w-36 overflow-hidden rounded-lg border border-white/10 bg-slate-900/95 shadow-lg">
@@ -1775,6 +1830,7 @@ export default function PopulationDashboard() {
         return;
       }
 
+      chartsRef.current[id]?.instance?.hideLoading();
       chartsRef.current[id]?.instance?.setOption({
         title: {
           text: "Query Failed",
@@ -1784,6 +1840,33 @@ export default function PopulationDashboard() {
       });
     },
     [setWidgetBodyMode],
+  );
+
+  const renderWidgetResult = useCallback(
+    (id: string, type: ChartType, data: QueryRow[], schema?: string[]) => {
+      const applyData = () => {
+        const meta = chartsRef.current[id];
+
+        if (!meta) {
+          requestAnimationFrame(applyData);
+          return;
+        }
+
+        if (type === "table") {
+          initChart(id, type, data, schema);
+          return;
+        }
+
+        meta.instance?.hideLoading();
+        meta.instance?.resize();
+        meta.instance?.setOption(buildOption(type, data, schema), {
+          notMerge: true,
+        });
+      };
+
+      applyData();
+    },
+    [initChart],
   );
 
   const addWidget = useCallback(
@@ -1947,34 +2030,10 @@ export default function PopulationDashboard() {
       const rows = result.data ?? [];
       const schema = result.result_schema ?? [];
       updateWidgetData(id, rows, schema);
-
-      const applyData = () => {
-        const meta = chartsRef.current[id];
-
-        if (!meta) {
-          requestAnimationFrame(applyData);
-          return;
-        }
-
-        if (type === "table") {
-          initChart(id, type, rows, schema);
-          return;
-        }
-
-        meta.instance?.hideLoading();
-        meta.instance?.resize();
-        meta.instance?.setOption(buildOption(type, rows, schema), {
-          notMerge: true,
-        });
-      };
-
-      applyData();
+      renderWidgetResult(id, type, rows, schema);
     } catch (err) {
       toast.error("Query failed: " + (err as Error).message);
 
-      const meta = chartsRef.current[id];
-
-      meta?.instance?.hideLoading();
       setWidgetError(id, type);
     }
   }, [
@@ -1982,6 +2041,7 @@ export default function PopulationDashboard() {
     getBottomY,
     initChart,
     isViewer,
+    renderWidgetResult,
     resizeAllCharts,
     setWidgetError,
     setWidgetLoading,
@@ -2053,10 +2113,25 @@ export default function PopulationDashboard() {
     async (dashboardId: string) => {
       const container = gridContainerRef.current;
       if (!container) return;
+      const requestId = ++dashboardLoadRequestRef.current;
+      dashboardLoadAbortRef.current?.abort();
+      const abortController = new AbortController();
+      dashboardLoadAbortRef.current = abortController;
+      const isStaleRequest = () =>
+        dashboardLoadRequestRef.current !== requestId;
 
       try {
         setRefreshingDashboard(true);
-        const result = await fetchDashboard(dashboardId);
+        const [result, widgetsResult] = await Promise.all([
+          fetchDashboard(dashboardId, { signal: abortController.signal }),
+          fetchDashboardWidgets(dashboardId, {
+            signal: abortController.signal,
+          }),
+        ]);
+
+        if (abortController.signal.aborted || isStaleRequest()) {
+          return;
+        }
 
         if (!result?.data) {
           throw new Error("Dashboard response missing data");
@@ -2065,7 +2140,7 @@ export default function PopulationDashboard() {
         setDashboardName(result.data?.name || "My Dashboard");
         setDashboardDescription(result.data?.description || "");
 
-        const list: BackendWidget[] = result?.data?.widgets ?? [];
+        const list: BackendWidget[] = widgetsResult?.data ?? [];
 
         // 1. Destroy all charts first
         Object.keys(chartsRef.current).forEach(destroyChart);
@@ -2098,16 +2173,14 @@ export default function PopulationDashboard() {
         }
 
         const loadedWidgets: DashboardWidget[] = [];
-        const pendingCharts: Array<() => void> = [];
 
         for (const w of list) {
           const id = w.id;
           const type = w.widget_type;
-          const data = w.query?.data ?? [];
-          const schema = w.query?.result_schema;
+          const title = `${type.toUpperCase()} CHART`;
 
           widgetsMetaRef.current[id] = {
-            queryId: w.query?.id ?? "",
+            queryId: w.query_id ?? "",
             chartType: type,
           };
 
@@ -2117,39 +2190,166 @@ export default function PopulationDashboard() {
             y: w.position.y,
             w: w.position.w,
             h: w.position.h,
-            title: w.query?.name || `${type.toUpperCase()} CHART`,
+            title,
           });
-
-          // requestAnimationFrame(() => initChart(id, type, data, schema));
 
           loadedWidgets.push({
             id,
-            queryId: w.query?.id ?? "",
+            queryId: w.query_id ?? "",
             chartType: type,
-            title: w.query?.name || "",
+            title,
             position: w.position,
-            data,
-            schema,
+            data: [],
+            schema: [],
           });
-
-          pendingCharts.push(() => initChart(id, type, data, schema));
         }
 
         setWidgets(loadedWidgets);
 
         requestAnimationFrame(() => {
-          pendingCharts.forEach((fn) => fn());
+          for (const widget of loadedWidgets) {
+            initChart(widget.id, widget.chartType, []);
+
+            if (widget.queryId) {
+              setWidgetLoading(widget.id, widget.chartType);
+              continue;
+            }
+
+            setWidgetError(widget.id, widget.chartType);
+          }
+
           resizeAllCharts();
         });
+
+        const widgetIdsByQueryId = new Map<string, string[]>();
+
+        for (const widget of loadedWidgets) {
+          if (!widget.queryId) {
+            continue;
+          }
+
+          const widgetIds = widgetIdsByQueryId.get(widget.queryId) ?? [];
+          widgetIds.push(widget.id);
+          widgetIdsByQueryId.set(widget.queryId, widgetIds);
+        }
+
+        const uniqueQueryIds = Array.from(widgetIdsByQueryId.keys());
+        const queryResultCache = new Map<string, QueryExecutionResult>();
+        const failedQueryIds: string[] = [];
+
+        await mapWithConcurrency(
+          uniqueQueryIds,
+          DASHBOARD_QUERY_CONCURRENCY,
+          async (queryId) => {
+            let execution = queryResultCache.get(queryId);
+
+            if (!execution) {
+              try {
+                const query = await fetchQueryWithData(queryId, {
+                  signal: abortController.signal,
+                });
+                execution = {
+                  status: "fulfilled",
+                  query,
+                };
+              } catch (error) {
+                if (isAbortError(error)) {
+                  throw error;
+                }
+
+                execution = {
+                  status: "rejected",
+                  error:
+                    error instanceof Error
+                      ? error
+                      : new Error("Query execution failed"),
+                };
+              }
+
+              queryResultCache.set(queryId, execution);
+            }
+
+            if (abortController.signal.aborted || isStaleRequest()) {
+              return execution;
+            }
+
+            const targetWidgetIds = widgetIdsByQueryId.get(queryId) ?? [];
+
+            if (execution.status === "fulfilled") {
+              const rows = execution.query.data ?? [];
+              const schema = execution.query.result_schema ?? [];
+              const title = execution.query.name;
+
+              targetWidgetIds.forEach((widgetId) => {
+                const meta = widgetsMetaRef.current[widgetId];
+
+                if (!meta) {
+                  return;
+                }
+
+                if (title) {
+                  updateWidgetTitle(widgetId, title);
+                }
+
+                updateWidgetData(widgetId, rows, schema);
+                renderWidgetResult(widgetId, meta.chartType, rows, schema);
+              });
+
+              return execution;
+            }
+
+            failedQueryIds.push(queryId);
+
+            targetWidgetIds.forEach((widgetId) => {
+              const meta = widgetsMetaRef.current[widgetId];
+
+              if (!meta) {
+                return;
+              }
+
+              setWidgetError(widgetId, meta.chartType);
+            });
+
+            return execution;
+          },
+        );
+
+        if (!isStaleRequest() && failedQueryIds.length) {
+          toast.error(
+            `${failedQueryIds.length} ${
+              failedQueryIds.length === 1 ? "widget query" : "widget queries"
+            } failed to load.`,
+          );
+        }
       } catch (err) {
+        if (isAbortError(err) || isStaleRequest()) {
+          return;
+        }
+
         console.error("Failed to load dashboard:", err);
         toast.error("Failed to load dashboard: " + (err as Error).message);
         return;
       } finally {
-        setRefreshingDashboard(false);
+        if (dashboardLoadAbortRef.current === abortController) {
+          dashboardLoadAbortRef.current = null;
+        }
+
+        if (!abortController.signal.aborted && !isStaleRequest()) {
+          setRefreshingDashboard(false);
+        }
       }
     },
-    [addWidget, destroyChart, initChart, resizeAllCharts],
+    [
+      addWidget,
+      destroyChart,
+      initChart,
+      renderWidgetResult,
+      resizeAllCharts,
+      setWidgetError,
+      setWidgetLoading,
+      updateWidgetData,
+      updateWidgetTitle,
+    ],
   );
 
   useEffect(() => {
@@ -2241,6 +2441,11 @@ export default function PopulationDashboard() {
     }
 
     void loadDashboardFromAPI(selectedDashboardId);
+
+    return () => {
+      dashboardLoadAbortRef.current?.abort();
+      dashboardLoadAbortRef.current = null;
+    };
   }, [loadDashboardFromAPI, selectedDashboardId]);
 
   return (
