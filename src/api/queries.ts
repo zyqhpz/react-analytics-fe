@@ -1,4 +1,10 @@
-import type { FullSchema, Query } from "@/types/query";
+import type {
+  FullSchema,
+  Query,
+  QueryVariableDefinition,
+  QueryVariableMap,
+  QueryVariableOption,
+} from "@/types/query";
 import { API_BASE_URL, type ResponseApiBase } from "./base";
 import { authFetch } from "./client";
 import { isSuperUserRole } from "./users";
@@ -7,6 +13,17 @@ import { handleUnauthorizedStatus } from "./utils";
 export type QueryApiResponse = ResponseApiBase<Query | Query[]>;
 export type GetSchemasResponse = ResponseApiBase<FullSchema>;
 type RequestOptions = Pick<RequestInit, "signal">;
+type QueryRunPayload = {
+  dashboard_id?: string;
+  widget_id?: string;
+  variables?: QueryVariableMap;
+};
+
+export type QueryFiltersResponse = ResponseApiBase<{
+  variables?: QueryVariableDefinition[];
+  applied_variables?: QueryVariableMap;
+  filter_data?: Record<string, QueryVariableOption[]>;
+}>;
 
 export const fetchSavedQueries = async (roleName?: string | null) => {
   const endpoint = isSuperUserRole(roleName)
@@ -28,11 +45,17 @@ export const fetchSavedQueries = async (roleName?: string | null) => {
 export const fetchQueryWithData = async (
   queryId: string,
   options: RequestOptions = {},
+  payload?: QueryRunPayload,
 ) => {
-  const res = await authFetch(
-    `${API_BASE_URL}/api/v1/query/${queryId}/run`,
-    options,
-  );
+  const res = await authFetch(`${API_BASE_URL}/api/v1/query/${queryId}/run`, {
+    ...options,
+    ...(payload
+      ? {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }
+      : {}),
+  });
 
   handleUnauthorizedStatus(res.status);
 
@@ -43,6 +66,26 @@ export const fetchQueryWithData = async (
   }
 
   return json.data as Query;
+};
+
+export const fetchQueryFilters = async (
+  queryId: string,
+  options: RequestOptions = {},
+) => {
+  const res = await authFetch(
+    `${API_BASE_URL}/api/v1/query/${queryId}/filters`,
+    options,
+  );
+
+  handleUnauthorizedStatus(res.status);
+
+  const json: QueryFiltersResponse = await res.json();
+
+  if (!res.ok) {
+    throw new Error(json.description);
+  }
+
+  return json.data;
 };
 
 export const deleteSavedQuery = async (queryId: string) => {

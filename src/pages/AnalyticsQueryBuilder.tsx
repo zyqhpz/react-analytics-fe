@@ -6,6 +6,7 @@ import { isSuperUserRole } from "@/api/users";
 import { handleUnauthorizedStatus } from "@/api/utils";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
 import { DataTable, type ResolvedDataTableModel } from "@/components/DataTable";
+import { VariableDatePicker } from "@/components/VariableDatePicker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -49,10 +50,22 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/context/AuthContext";
-import { type Query, type QueryType } from "@/types/query";
+import {
+  coercePrimitiveValue,
+  formatVariableValueForText,
+  parseVariableValueFromText,
+  stringifyVariableOptionValue,
+} from "@/lib/variables";
+import {
+  type Query,
+  type QueryType,
+  type QueryVariableDefinition,
+  type QueryVariableMap,
+  type QueryVariableOption,
+} from "@/types/query";
 import type { UserDepartment } from "@/types/user";
 import { LoaderCircle } from "lucide-react";
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { FaCheckCircle } from "react-icons/fa";
 import { IoArrowBack } from "react-icons/io5";
 import {
@@ -64,8 +77,9 @@ import {
   type RuleGroupType,
   type RuleType,
   type ValueEditorProps,
+  type ValueSourceSelectorProps,
 } from "react-querybuilder";
-import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { format as formatSqlString } from "sql-formatter";
 
@@ -136,6 +150,12 @@ type SharedSqlConfig = {
   sql: string;
 };
 
+type QueryVariableDraft = QueryVariableDefinition & {
+  draftId: string;
+  sourceKind?: "none" | "options" | "sql";
+  optionsText?: string;
+};
+
 type FilterReferenceSection = {
   title: string;
   description: string;
@@ -162,6 +182,195 @@ const FILTER_REFERENCE_SECTIONS: FilterReferenceSection[] = [
     ],
   },
 ];
+
+const VARIABLE_TYPE_OPTIONS = [
+  "string",
+  "number",
+  "boolean",
+  "select",
+  "date",
+  "datetime",
+];
+const EMPTY_TEST_VARIABLE_VALUE = "__none__";
+
+const createEmptyVariableDraft = (
+  forceRequired = false,
+): QueryVariableDraft => ({
+  draftId: crypto.randomUUID(),
+  key: "",
+  label: "",
+  type: "string",
+  required: forceRequired,
+  multiple: false,
+  options: [],
+  sourceKind: "none",
+  optionsText: "",
+});
+
+const createStatusesPresetVariableDraft = (
+  forceRequired = false,
+): QueryVariableDraft => ({
+  draftId: crypto.randomUUID(),
+  key: "statuses",
+  label: "Status",
+  type: "string",
+  required: forceRequired,
+  multiple: false,
+  options: [
+    { label: "Success", value: "SUCCESS" },
+    { label: "Failed", value: "FAILED" },
+  ],
+  sourceKind: "options",
+  optionsText: "Success=SUCCESS\nFailed=FAILED",
+});
+
+const formatVariableOptionsText = (options?: QueryVariableOption[]) =>
+  (options ?? [])
+    .map((option) =>
+      option.label === String(option.value ?? "")
+        ? String(option.value ?? "")
+        : `${option.label}=${String(option.value ?? "")}`,
+    )
+    .join("\n");
+
+const parseVariableOptionsText = (
+  value: string,
+  type: string,
+): QueryVariableOption[] =>
+  value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [rawLabel, ...rest] = line.split("=");
+      const label = rawLabel.trim();
+      const rawValue = rest.length ? rest.join("=").trim() : label;
+
+      return {
+        label,
+        value: coercePrimitiveValue(rawValue, { type }),
+      };
+    });
+
+const getTestVariableOptions = (
+  variable: QueryVariableDefinition,
+): QueryVariableOption[] => {
+  if (variable.options?.length) {
+    return variable.options;
+  }
+
+  if (variable.type === "boolean") {
+    return [
+      { label: "True", value: true },
+      { label: "False", value: false },
+    ];
+  }
+
+  return [];
+};
+
+const toVariableDraft = (
+  variable?: QueryVariableDefinition,
+  forceRequired = false,
+): QueryVariableDraft =>
+  variable
+    ? {
+        ...variable,
+        required: forceRequired || Boolean(variable.required),
+        draftId: crypto.randomUUID(),
+        sourceKind:
+          variable.source?.kind === "sql"
+            ? "sql"
+            : variable.options?.length
+              ? "options"
+              : "none",
+        optionsText: formatVariableOptionsText(variable.options),
+      }
+    : createEmptyVariableDraft(forceRequired);
+
+const normalizeVariableDraft = (
+  draft: QueryVariableDraft,
+  forceRequired = false,
+): QueryVariableDefinition | null => {
+  const key = draft.key.trim();
+  const label = draft.label.trim();
+
+  if (!key || !label) {
+    return null;
+  }
+
+  const normalized: QueryVariableDefinition = {
+    key,
+    label,
+    type: draft.type,
+    required: forceRequired || Boolean(draft.required),
+    multiple: Boolean(draft.multiple),
+  };
+
+  if (draft.sourceKind === "sql") {
+    const sql = draft.source?.sql?.trim();
+    if (sql) {
+      normalized.source = {
+        kind: "sql",
+        sql,
+        value_field: draft.source?.value_field?.trim() || "value",
+        label_field: draft.source?.label_field?.trim() || "label",
+      };
+    }
+  }
+
+  if (draft.sourceKind === "options") {
+    const options = parseVariableOptionsText(
+      draft.optionsText ?? "",
+      draft.type,
+    );
+    if (options.length) {
+      normalized.options = options;
+    }
+  }
+
+  return normalized;
+};
+
+const transformRuleGroupValueSource = (
+  value: unknown,
+  mode: "editor" | "api",
+): unknown => {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => transformRuleGroupValueSource(item, mode));
+  }
+
+  if ("rules" in value && Array.isArray(value.rules)) {
+    return {
+      ...value,
+      rules: value.rules.map((rule) =>
+        transformRuleGroupValueSource(rule, mode),
+      ),
+    };
+  }
+
+  if ("field" in value && "operator" in value) {
+    const rule = value as RuleType & { valueSource?: string };
+    const currentValueSource = rule.valueSource as string | undefined;
+    return {
+      ...rule,
+      valueSource:
+        mode === "editor"
+          ? currentValueSource === "variable"
+            ? "field"
+            : currentValueSource
+          : currentValueSource === "field"
+            ? "variable"
+            : currentValueSource,
+    };
+  }
+
+  return value;
+};
 
 const formatNumericStringWithSeparators = (value: string): string => {
   const trimmed = value.trim();
@@ -294,6 +503,18 @@ const DateTimeValueEditor = (props: ValueEditorProps) => {
   );
 };
 
+const VariableValueSourceSelector = (props: ValueSourceSelectorProps) => (
+  <Select value={props.value} onValueChange={props.handleOnChange}>
+    <SelectTrigger className="min-w-32 cursor-pointer hover:border-primary/40 transition">
+      <SelectValue placeholder="Value source" />
+    </SelectTrigger>
+    <SelectContent>
+      <SelectItem value="value">Value</SelectItem>
+      <SelectItem value="field">Variable</SelectItem>
+    </SelectContent>
+  </Select>
+);
+
 const GroupedFieldSelector = (props: FieldSelectorProps) => {
   const options = props.options as Array<
     | { label: string; name: string }
@@ -415,6 +636,10 @@ export default function App() {
   const [selectedDepartment, setSelectedDepartment] = useState("");
   const [queryType, setQueryType] = useState<QueryType>("visual");
   const [sqlQuery, setSqlQuery] = useState("");
+  const [variables, setVariables] = useState<QueryVariableDraft[]>([]);
+  const [testVariableInputs, setTestVariableInputs] = useState<
+    Record<string, string>
+  >({});
 
   const [queryName, setQueryName] = useState("");
   const [queryDescription, setQueryDescription] = useState("");
@@ -519,10 +744,13 @@ export default function App() {
     try {
       setSqlQuery(
         formatSqlString(sqlQuery, {
-          language: "sql",
+          language: "mysql",
           tabWidth: 2,
           keywordCase: "upper",
           linesBetweenQueries: 1,
+          paramTypes: {
+            named: [":"],
+          },
         }),
       );
     } catch (error) {
@@ -576,6 +804,93 @@ export default function App() {
   const getSqlFromQuery = (savedQuery: Query) =>
     savedQuery.sql_text?.trim() || "";
 
+  const normalizedVariables = useMemo(
+    () =>
+      variables
+        .map((variable) =>
+          normalizeVariableDraft(variable, queryType === "sql"),
+        )
+        .filter((variable): variable is QueryVariableDefinition =>
+          Boolean(variable),
+        ),
+    [queryType, variables],
+  );
+
+  const testVariablesPayload = useMemo(
+    () =>
+      normalizedVariables.reduce<QueryVariableMap>((acc, variable) => {
+        const rawInput = testVariableInputs[variable.key] ?? "";
+        const parsedValue = parseVariableValueFromText(rawInput, variable);
+
+        if (Array.isArray(parsedValue)) {
+          if (parsedValue.length) {
+            acc[variable.key] = parsedValue;
+          }
+          return acc;
+        }
+
+        if (
+          parsedValue !== null &&
+          parsedValue !== undefined &&
+          String(parsedValue).trim() !== ""
+        ) {
+          acc[variable.key] = parsedValue;
+        }
+
+        return acc;
+      }, {}),
+    [normalizedVariables, testVariableInputs],
+  );
+  const normalizedVariablesByKey = useMemo(
+    () =>
+      Object.fromEntries(
+        normalizedVariables.map((variable) => [variable.key, variable]),
+      ),
+    [normalizedVariables],
+  );
+
+  const variableKeyOptions = variables
+    .map((variable) => variable.key.trim())
+    .filter(Boolean);
+
+  const VariableAwareValueEditor = (props: ValueEditorProps) => {
+    if (props.valueSource === "field") {
+      const currentValue = String(props.value ?? "");
+      const hasCurrentValue =
+        currentValue && !variableKeyOptions.includes(currentValue);
+
+      return (
+        <Select
+          value={currentValue}
+          onValueChange={(value) =>
+            props.handleOnChange(value === "__empty__" ? "" : value)
+          }
+        >
+          <SelectTrigger className="min-w-40 cursor-pointer hover:border-primary/40 transition">
+            <SelectValue placeholder="Select variable" />
+          </SelectTrigger>
+          <SelectContent>
+            {variableKeyOptions.map((variableKey) => (
+              <SelectItem key={variableKey} value={variableKey}>
+                {variableKey}
+              </SelectItem>
+            ))}
+            {!variableKeyOptions.length ? (
+              <SelectItem value="__empty__" disabled>
+                No variables defined
+              </SelectItem>
+            ) : null}
+            {hasCurrentValue ? (
+              <SelectItem value={currentValue}>{currentValue}</SelectItem>
+            ) : null}
+          </SelectContent>
+        </Select>
+      );
+    }
+
+    return <DateTimeValueEditor {...props} />;
+  };
+
   const resetVisualBuilderState = () => {
     setJoins([]);
     setSelectedColumns([]);
@@ -598,6 +913,7 @@ export default function App() {
     setOrderBy([]);
     setQuery(emptyRuleGroup);
     setHaving(emptyRuleGroup);
+    setTestVariableInputs({});
   };
 
   const applyVisualConfig = (config: VisualQueryRequest) => {
@@ -627,8 +943,18 @@ export default function App() {
     setFillMissingDates(Boolean(config.fill_missing_dates));
     setLimit(config.limit ? String(config.limit) : "");
     setOrderBy(config.order_by || []);
-    setQuery(toRuleGroup(config.where));
-    setHaving(toRuleGroup(config.having));
+    setQuery(
+      transformRuleGroupValueSource(
+        toRuleGroup(config.where),
+        "editor",
+      ) as RuleGroupType,
+    );
+    setHaving(
+      transformRuleGroupValueSource(
+        toRuleGroup(config.having),
+        "editor",
+      ) as RuleGroupType,
+    );
     setSqlQuery("");
   };
 
@@ -648,8 +974,8 @@ export default function App() {
       group_by: groupBy,
       ...(fillMissingDates ? { fill_missing_dates: true } : {}),
       ...(pivot ? { pivot } : {}),
-      where: query,
-      having,
+      where: transformRuleGroupValueSource(query, "api"),
+      having: transformRuleGroupValueSource(having, "api"),
       order_by: orderBy,
       ...(parsedLimit ? { limit: parsedLimit } : {}),
     };
@@ -902,6 +1228,19 @@ export default function App() {
   const loadQuery = (query: Query) => {
     const nextQueryType = query.query_type || "visual";
     setQueryType(nextQueryType);
+    setVariables(
+      (query.variables ?? []).map((variable) =>
+        toVariableDraft(variable, nextQueryType === "sql"),
+      ),
+    );
+    setTestVariableInputs(
+      Object.fromEntries(
+        (query.variables ?? []).map((variable) => [
+          variable.key,
+          formatVariableValueForText(query.applied_variables?.[variable.key]),
+        ]),
+      ),
+    );
 
     if (nextQueryType === "sql") {
       applySqlConfig(getSqlFromQuery(query));
@@ -934,6 +1273,8 @@ export default function App() {
     setSqlQuery("");
     setQueryName("");
     setQueryDescription("");
+    setVariables([]);
+    setTestVariableInputs({});
     setGroupByDateField("");
     setAggregationFunc("");
     setAggregationField("");
@@ -961,6 +1302,8 @@ export default function App() {
     setQueryType("visual");
     setQueryName("");
     setQueryDescription("");
+    setVariables([]);
+    setTestVariableInputs({});
     setSqlQuery("");
     setResults([]);
     setTestSuccess(false);
@@ -1289,7 +1632,7 @@ export default function App() {
 
   const findInvalidDateTimeRule = (
     ruleGroup: RuleGroupType,
-  ): { field: string; value: string } | null => {
+  ): { field: string; value: string; variableKey?: string } | null => {
     for (const rule of ruleGroup.rules) {
       if ("rules" in rule) {
         const invalidNestedRule = findInvalidDateTimeRule(rule);
@@ -1299,6 +1642,29 @@ export default function App() {
 
       const matchingField = fields.find((field) => field.name === rule.field);
       if (!matchingField || !isDateLikeColumn(matchingField.type, rule.field)) {
+        continue;
+      }
+
+      const valueSource =
+        "valueSource" in rule ? String(rule.valueSource ?? "") : "";
+
+      if (valueSource === "field") {
+        const variableKey = String(rule.value ?? "").trim();
+        const variableDefinition = normalizedVariablesByKey[variableKey];
+        const rawVariableValue = testVariableInputs[variableKey]?.trim() ?? "";
+
+        if (!variableDefinition || !rawVariableValue) {
+          continue;
+        }
+
+        if (!isValidDateTimeRuleValue(rawVariableValue)) {
+          return {
+            field: rule.field,
+            value: rawVariableValue,
+            variableKey,
+          };
+        }
+
         continue;
       }
 
@@ -1323,7 +1689,9 @@ export default function App() {
     if (!invalidRule) return true;
 
     toast.error("Invalid datetime filter value.", {
-      description: `${invalidRule.field} must use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS.`,
+      description: invalidRule.variableKey
+        ? `${invalidRule.field} uses variable "${invalidRule.variableKey}", which must use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS.`
+        : `${invalidRule.field} must use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS.`,
     });
 
     return false;
@@ -1337,8 +1705,15 @@ export default function App() {
       return;
     }
 
-    const payload =
+    const config =
       queryType === "visual" ? getVisualPayload() : { sql: sqlQuery.trim() };
+    const shouldWrapWithVariables = normalizedVariables.length > 0;
+    const payload = shouldWrapWithVariables
+      ? {
+          config,
+          variables: testVariablesPayload,
+        }
+      : config;
 
     console.log("Payload:", payload);
 
@@ -1439,7 +1814,19 @@ export default function App() {
     pivotValues,
     limit,
     fillMissingDates,
+    testVariableInputs,
   ]);
+
+  useEffect(() => {
+    setTestVariableInputs((prev) =>
+      Object.fromEntries(
+        normalizedVariables.map((variable) => [
+          variable.key,
+          prev[variable.key] ?? "",
+        ]),
+      ),
+    );
+  }, [normalizedVariables]);
 
   useEffect(() => {
     if (!schema || !hasInitializedFromUrl) return;
@@ -1530,6 +1917,7 @@ export default function App() {
       description: queryDescription,
       query_type: queryType,
       config,
+      variables: normalizedVariables,
       ...(isSuperAdmin && selectedDepartment.trim()
         ? { department: selectedDepartment.trim() }
         : {}),
@@ -1660,12 +2048,12 @@ export default function App() {
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <Link
+          {/* <Link
             to="/graphql-playground"
             className="inline-flex items-center rounded-md border border-cyan-300/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-700 transition hover:bg-cyan-500/20"
           >
             GraphQL Playground
-          </Link>
+          </Link> */}
           <CurrentUserBadge className="bg-slate-950" />
         </div>
       </div>
@@ -1837,6 +2225,461 @@ export default function App() {
           Raw SQL
         </Button>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Runtime Variables</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Define reusable variables for dashboard and widget filters. Visual
+            filters can then reference them with the value source set to
+            Variable.
+          </p>
+
+          {variables.length ? (
+            <div className="space-y-4">
+              {variables.map((variable, index) => (
+                <div
+                  key={variable.draftId}
+                  className="space-y-4 rounded-lg border p-4"
+                >
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <input
+                      type="text"
+                      value={variable.key}
+                      onChange={(event) =>
+                        setVariables((prev) =>
+                          prev.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, key: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                      placeholder="Key"
+                      className="w-full rounded border px-3 py-2"
+                    />
+                    <input
+                      type="text"
+                      value={variable.label}
+                      onChange={(event) =>
+                        setVariables((prev) =>
+                          prev.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, label: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                      placeholder="Label"
+                      className="w-full rounded border px-3 py-2"
+                    />
+                    <Select
+                      value={variable.type}
+                      onValueChange={(value) =>
+                        setVariables((prev) =>
+                          prev.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, type: value }
+                              : item,
+                          ),
+                        )
+                      }
+                    >
+                      <SelectTrigger className="cursor-pointer">
+                        <SelectValue placeholder="Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {VARIABLE_TYPE_OPTIONS.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-6">
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={
+                          queryType === "sql" || Boolean(variable.required)
+                        }
+                        disabled={queryType === "sql"}
+                        onCheckedChange={(checked) =>
+                          setVariables((prev) =>
+                            prev.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? {
+                                    ...item,
+                                    required:
+                                      queryType === "sql"
+                                        ? true
+                                        : Boolean(checked),
+                                  }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                      {queryType === "sql"
+                        ? "Required (always on for SQL)"
+                        : "Required"}
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={Boolean(variable.multiple)}
+                        onCheckedChange={(checked) =>
+                          setVariables((prev) =>
+                            prev.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, multiple: Boolean(checked) }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                      Multiple
+                    </label>
+                    <Select
+                      value={variable.sourceKind ?? "none"}
+                      onValueChange={(value: "none" | "options" | "sql") =>
+                        setVariables((prev) =>
+                          prev.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, sourceKind: value }
+                              : item,
+                          ),
+                        )
+                      }
+                    >
+                      <SelectTrigger className="w-48 cursor-pointer">
+                        <SelectValue placeholder="Source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No source</SelectItem>
+                        <SelectItem value="options">Static options</SelectItem>
+                        <SelectItem value="sql">SQL options</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() =>
+                        setVariables((prev) =>
+                          prev.filter((_, itemIndex) => itemIndex !== index),
+                        )
+                      }
+                    >
+                      Remove
+                    </Button>
+                  </div>
+
+                  {variable.sourceKind === "options" ? (
+                    <textarea
+                      value={variable.optionsText ?? ""}
+                      onChange={(event) =>
+                        setVariables((prev) =>
+                          prev.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, optionsText: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                      placeholder={`One option per line\nSuccess=SUCCESS\nFailed=FAILED`}
+                      className="min-h-32 w-full rounded border px-3 py-2 font-mono text-sm"
+                    />
+                  ) : null}
+
+                  {variable.sourceKind === "sql" ? (
+                    <div className="space-y-3">
+                      <textarea
+                        value={variable.source?.sql ?? ""}
+                        onChange={(event) =>
+                          setVariables((prev) =>
+                            prev.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? {
+                                    ...item,
+                                    source: {
+                                      ...item.source,
+                                      kind: "sql",
+                                      sql: event.target.value,
+                                      value_field:
+                                        item.source?.value_field || "value",
+                                      label_field:
+                                        item.source?.label_field || "label",
+                                    },
+                                  }
+                                : item,
+                            ),
+                          )
+                        }
+                        placeholder="SELECT id AS value, name AS label FROM merchants ORDER BY name"
+                        className="min-h-32 w-full rounded border px-3 py-2 font-mono text-sm"
+                      />
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <input
+                          type="text"
+                          value={variable.source?.value_field ?? "value"}
+                          onChange={(event) =>
+                            setVariables((prev) =>
+                              prev.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? {
+                                      ...item,
+                                      source: {
+                                        ...item.source,
+                                        kind: "sql",
+                                        sql: item.source?.sql ?? "",
+                                        value_field: event.target.value,
+                                        label_field:
+                                          item.source?.label_field || "label",
+                                      },
+                                    }
+                                  : item,
+                              ),
+                            )
+                          }
+                          placeholder="Value field"
+                          className="w-full rounded border px-3 py-2"
+                        />
+                        <input
+                          type="text"
+                          value={variable.source?.label_field ?? "label"}
+                          onChange={(event) =>
+                            setVariables((prev) =>
+                              prev.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? {
+                                      ...item,
+                                      source: {
+                                        ...item.source,
+                                        kind: "sql",
+                                        sql: item.source?.sql ?? "",
+                                        value_field:
+                                          item.source?.value_field || "value",
+                                        label_field: event.target.value,
+                                      },
+                                    }
+                                  : item,
+                              ),
+                            )
+                          }
+                          placeholder="Label field"
+                          className="w-full rounded border px-3 py-2"
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
+              No runtime variables defined yet.
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="outline"
+              onClick={() =>
+                setVariables((prev) => [
+                  ...prev,
+                  createEmptyVariableDraft(queryType === "sql"),
+                ])
+              }
+              className="cursor-pointer"
+            >
+              Add Variable
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setVariables((prev) => {
+                  const existingIndex = prev.findIndex(
+                    (variable) => variable.key.trim() === "statuses",
+                  );
+                  const preset = createStatusesPresetVariableDraft(
+                    queryType === "sql",
+                  );
+
+                  if (existingIndex >= 0) {
+                    return prev.map((variable, index) =>
+                      index === existingIndex
+                        ? { ...preset, draftId: variable.draftId }
+                        : variable,
+                    );
+                  }
+
+                  return [...prev, preset];
+                })
+              }
+              className="cursor-pointer"
+            >
+              Add `statuses` Preset
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {normalizedVariables.length ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Test Variables</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Provide runtime values for variable-based filters before running a
+              test query.
+            </p>
+
+            <div className="space-y-4">
+              {normalizedVariables.map((variable) => (
+                <div key={variable.key} className="rounded-lg border p-4">
+                  {(() => {
+                    const variableOptions = getTestVariableOptions(variable);
+                    return (
+                      <>
+                        <div className="mb-2">
+                          <p className="text-sm font-medium">
+                            {variable.label}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {variable.key}
+                            {variable.required ? " • Required" : ""}
+                            {variable.multiple ? " • Multiple" : ""}
+                          </p>
+                        </div>
+
+                        {variableOptions.length ? (
+                          variable.multiple ? (
+                            <div className="space-y-2 rounded-md border p-3">
+                              {variableOptions.map((option) => {
+                                const optionValue =
+                                  stringifyVariableOptionValue(option.value);
+                                const selectedValues = Array.isArray(
+                                  testVariablesPayload[variable.key],
+                                )
+                                  ? (
+                                      testVariablesPayload[
+                                        variable.key
+                                      ] as Array<
+                                        string | number | boolean | null
+                                      >
+                                    ).map((value) =>
+                                      stringifyVariableOptionValue(value),
+                                    )
+                                  : [];
+                                const checked =
+                                  selectedValues.includes(optionValue);
+
+                                return (
+                                  <label
+                                    key={`${variable.key}-${option.label}-${option.value}`}
+                                    className="flex items-center gap-3 text-sm"
+                                  >
+                                    <Checkbox
+                                      checked={checked}
+                                      onCheckedChange={(
+                                        nextChecked: boolean | "indeterminate",
+                                      ) => {
+                                        const nextValues = nextChecked
+                                          ? [...selectedValues, optionValue]
+                                          : selectedValues.filter(
+                                              (value) => value !== optionValue,
+                                            );
+
+                                        setTestVariableInputs((prev) => ({
+                                          ...prev,
+                                          [variable.key]: nextValues.join(", "),
+                                        }));
+                                      }}
+                                    />
+                                    <span>{option.label}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <Select
+                              value={
+                                testVariableInputs[variable.key]?.trim() ||
+                                EMPTY_TEST_VARIABLE_VALUE
+                              }
+                              onValueChange={(value) =>
+                                setTestVariableInputs((prev) => ({
+                                  ...prev,
+                                  [variable.key]:
+                                    value === EMPTY_TEST_VARIABLE_VALUE
+                                      ? ""
+                                      : value,
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Select value" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={EMPTY_TEST_VARIABLE_VALUE}>
+                                  None
+                                </SelectItem>
+                                {variableOptions.map((option) => (
+                                  <SelectItem
+                                    key={`${variable.key}-${option.label}-${option.value}`}
+                                    value={stringifyVariableOptionValue(
+                                      option.value,
+                                    )}
+                                  >
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )
+                        ) : variable.type === "date" ||
+                          variable.type === "datetime" ? (
+                          <VariableDatePicker
+                            definition={variable}
+                            value={testVariablesPayload[variable.key]}
+                            onChange={(nextValue) =>
+                              setTestVariableInputs((prev) => ({
+                                ...prev,
+                                [variable.key]: String(nextValue ?? ""),
+                              }))
+                            }
+                            className="w-full justify-start"
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            value={testVariableInputs[variable.key] ?? ""}
+                            onChange={(event) =>
+                              setTestVariableInputs((prev) => ({
+                                ...prev,
+                                [variable.key]: event.target.value,
+                              }))
+                            }
+                            placeholder={
+                              variable.multiple
+                                ? "Comma-separated values"
+                                : "Enter variable value"
+                            }
+                            className="w-full rounded border px-3 py-2"
+                          />
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {queryType === "visual" ? (
         <>
@@ -2388,10 +3231,12 @@ export default function App() {
                   fields={groupedQueryBuilderFields}
                   query={query}
                   onQueryChange={setQuery}
+                  getValueSources={() => ["value", "field"]}
                   controlElements={{
                     fieldSelector: GroupedFieldSelector,
                     operatorSelector: ThemedOperatorSelector,
-                    valueEditor: DateTimeValueEditor,
+                    valueEditor: VariableAwareValueEditor,
+                    valueSourceSelector: VariableValueSourceSelector,
                   }}
                   controlClassnames={{
                     queryBuilder: "space-y-4",
@@ -2430,9 +3275,12 @@ export default function App() {
                     fields={havingFields}
                     query={having}
                     onQueryChange={setHaving}
+                    getValueSources={() => ["value", "field"]}
                     controlElements={{
                       fieldSelector: GroupedFieldSelector,
                       operatorSelector: ThemedOperatorSelector,
+                      valueEditor: VariableAwareValueEditor,
+                      valueSourceSelector: VariableValueSourceSelector,
                     }}
                     controlClassnames={{
                       queryBuilder: "space-y-4",
@@ -2596,8 +3444,10 @@ export default function App() {
               className="min-h-80 w-full rounded-md border px-3 py-2 font-mono text-sm"
             />
             <p className="text-sm text-muted-foreground">
-              Testing uses `POST /query/test/sql` with an `sql` payload, and
-              saving uses `query_type = sql` with `config.sql`.
+              Testing uses `POST /query/test/sql` with either a plain `sql`
+              payload or <code>{`{ config, variables }`}</code> when runtime
+              variables are defined. Saving uses `query_type = sql` with
+              `config.sql`.
             </p>
           </CardContent>
         </Card>

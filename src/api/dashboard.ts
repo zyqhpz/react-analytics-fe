@@ -1,5 +1,9 @@
-import type { DashboardSummary, WidgetPosition } from "@/types/dashboard";
-import type { ChartType } from "@/types/query";
+import type {
+  DashboardSummary,
+  DashboardWidgetConfig,
+  WidgetPosition,
+} from "@/types/dashboard";
+import type { ChartType, QueryVariableMap } from "@/types/query";
 import { API_BASE_URL, type ResponseApiBase } from "./base";
 import { authFetch } from "./client";
 import { handleUnauthorizedStatus } from "./utils";
@@ -11,6 +15,7 @@ type DashboardListResponse = ResponseApiBase<DashboardSummary[]>;
 type DashboardMutationPayload = {
   name: string;
   description: string;
+  variables?: QueryVariableMap;
 };
 
 type CreateDashboardPayload = DashboardMutationPayload & {
@@ -30,7 +35,7 @@ type AdminDashboardListResponse = ResponseApiBase<{
 }>;
 
 type DashboardWidgetResponse = {
-  config?: Record<string, unknown>;
+  config?: DashboardWidgetConfig | Record<string, unknown>;
   created_at?: string;
   dashboard_id?: string;
   id: string;
