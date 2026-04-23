@@ -132,6 +132,14 @@ const DATE_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DATETIME_INPUT_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
 const DATETIME_INPUT_PLACEHOLDER = "YYYY-MM-DD or YYYY-MM-DD HH:MM:SS";
+const DATE_GROUP_TYPE_OPTIONS = [
+  { value: "hourly", label: "Hourly" },
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+] as const;
+
+type DateGroupType = (typeof DATE_GROUP_TYPE_OPTIONS)[number]["value"];
 
 type QueryBuilderField = Field & {
   group?: string;
@@ -606,6 +614,8 @@ export default function App() {
   const [aggregations, setAggregations] = useState<Aggregation[]>([]);
   const [groupBy, setGroupBy] = useState<string[]>([]);
   const [groupByDateField, setGroupByDateField] = useState("");
+  const [groupByDateType, setGroupByDateType] =
+    useState<DateGroupType>("daily");
   const [aggregationFunc, setAggregationFunc] = useState("");
   const [aggregationField, setAggregationField] = useState("");
   const [aggregationAliasInput, setAggregationAliasInput] = useState("");
@@ -661,9 +671,42 @@ export default function App() {
   const isRawQualifiedColumn = (value: string) =>
     /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(value);
 
+  const getDateGroupExpression = (
+    field: string,
+    groupType: DateGroupType,
+  ): string => {
+    switch (groupType) {
+      case "hourly":
+        return `HOURLY(${field})`;
+      case "weekly":
+        return `WEEKLY(${field})`;
+      case "monthly":
+        return `MONTHLY(${field})`;
+      case "daily":
+      default:
+        return `DATE(${field})`;
+    }
+  };
+
+  const getExpressionField = (value: string): string | null => {
+    const match = value.match(/^(?:DATE|HOURLY|WEEKLY|MONTHLY)\((.+)\)$/);
+    return match?.[1]?.trim() || null;
+  };
+
+  const isDateGroupExpression = (value: string) =>
+    /^(?:DATE|HOURLY|WEEKLY|MONTHLY)\(.+\)$/.test(value);
+
   const getJoinTableFromField = (value: string): string | null => {
-    if (!isRawQualifiedColumn(value)) return null;
-    return value.split(".")[0];
+    if (isRawQualifiedColumn(value)) {
+      return value.split(".")[0];
+    }
+
+    const expressionField = getExpressionField(value);
+    if (!expressionField || !isRawQualifiedColumn(expressionField)) {
+      return null;
+    }
+
+    return expressionField.split(".")[0];
   };
 
   const isDateLikeColumn = (type: string | undefined, name: string) => {
@@ -854,14 +897,26 @@ export default function App() {
     .filter(Boolean);
 
   const VariableAwareValueEditor = (props: ValueEditorProps) => {
-    if (props.valueSource === "field") {
-      const currentValue = String(props.value ?? "");
-      const hasCurrentValue =
-        currentValue && !variableKeyOptions.includes(currentValue);
+    const currentValue = String(props.value ?? "");
+    const selectedValue =
+      props.valueSource === "field" && variableKeyOptions.includes(currentValue)
+        ? currentValue
+        : undefined;
 
+    useEffect(() => {
+      if (props.valueSource !== "field") {
+        return;
+      }
+
+      if (currentValue && !variableKeyOptions.includes(currentValue)) {
+        props.handleOnChange("");
+      }
+    }, [currentValue, props, variableKeyOptions]);
+
+    if (props.valueSource === "field") {
       return (
         <Select
-          value={currentValue}
+          value={selectedValue}
           onValueChange={(value) =>
             props.handleOnChange(value === "__empty__" ? "" : value)
           }
@@ -880,9 +935,6 @@ export default function App() {
                 No variables defined
               </SelectItem>
             ) : null}
-            {hasCurrentValue ? (
-              <SelectItem value={currentValue}>{currentValue}</SelectItem>
-            ) : null}
           </SelectContent>
         </Select>
       );
@@ -897,6 +949,7 @@ export default function App() {
     setAggregations([]);
     setGroupBy([]);
     setGroupByDateField("");
+    setGroupByDateType("daily");
     setAggregationFunc("");
     setAggregationField("");
     setAggregationAliasInput("");
@@ -928,6 +981,7 @@ export default function App() {
     );
     setGroupBy(config.group_by || []);
     setGroupByDateField("");
+    setGroupByDateType("daily");
     setAggregationFunc("");
     setAggregationField("");
     setAggregationAliasInput("");
@@ -1040,7 +1094,7 @@ export default function App() {
   };
 
   const getColumnGroupLabel = (value: string) => {
-    if (value.startsWith("DATE(")) {
+    if (/^(?:DATE|HOURLY|WEEKLY|MONTHLY)\(/.test(value)) {
       return "Expressions";
     }
 
@@ -1276,6 +1330,7 @@ export default function App() {
     setVariables([]);
     setTestVariableInputs({});
     setGroupByDateField("");
+    setGroupByDateType("daily");
     setAggregationFunc("");
     setAggregationField("");
     setAggregationAliasInput("");
@@ -1495,6 +1550,30 @@ export default function App() {
     );
   };
 
+  const getGroupByAlias = (column: string) =>
+    selectedColumns.find((item) => item.name === column)?.alias || "";
+
+  const updateGroupByAlias = (column: string, alias: string) => {
+    setSelectedColumns((prev) => {
+      const trimmedAlias = alias.trim();
+      const existingIndex = prev.findIndex((item) => item.name === column);
+
+      if (existingIndex === -1) {
+        if (!trimmedAlias) {
+          return prev;
+        }
+
+        return [...prev, { name: column, alias: trimmedAlias }];
+      }
+
+      return prev.map((item, index) => {
+        if (index !== existingIndex) return item;
+        if (!trimmedAlias) return { name: item.name };
+        return { ...item, alias: trimmedAlias };
+      });
+    });
+  };
+
   const toggleGroupBy = (column: string) => {
     setGroupBy((prev) => {
       const updated = prev.includes(column)
@@ -1526,16 +1605,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    const getFieldJoinTable = (value: string | null | undefined) => {
-      if (!value) return null;
-      if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(value)) return null;
-      return value.split(".")[0];
-    };
-
     const isFieldStillAvailable = (value: string | null | undefined) => {
-      if (!hasSelectValue(value)) return false;
+      const normalizedValue = typeof value === "string" ? value.trim() : "";
+      if (!normalizedValue) return false;
 
-      const joinTable = getFieldJoinTable(value);
+      const joinTable = getJoinTableFromField(normalizedValue);
       if (!joinTable) return true;
 
       return joins.some((join) => join.table === joinTable);
@@ -1543,7 +1617,7 @@ export default function App() {
 
     setSelectedColumns((prev) =>
       prev.filter((col) => {
-        const tbl = getFieldJoinTable(col.name);
+        const tbl = getJoinTableFromField(col.name);
         if (!tbl) return true;
         return joins.some((j) => j.table === tbl);
       }),
@@ -1551,7 +1625,7 @@ export default function App() {
 
     setGroupBy((prev) =>
       prev.filter((col) => {
-        const tbl = getFieldJoinTable(col);
+        const tbl = getJoinTableFromField(col);
         if (!tbl) return true;
         return joins.some((j) => j.table === tbl);
       }),
@@ -1559,7 +1633,7 @@ export default function App() {
 
     setOrderBy((prev) =>
       prev.filter((o) => {
-        const tbl = getFieldJoinTable(o.field);
+        const tbl = getJoinTableFromField(o.field);
         if (!tbl) return true;
         return joins.some((j) => j.table === tbl);
       }),
@@ -1568,6 +1642,15 @@ export default function App() {
     setPivotField((prev) => (isFieldStillAvailable(prev) ? prev : ""));
     setPivotValueField((prev) => (isFieldStillAvailable(prev) ? prev : ""));
   }, [joins]);
+
+  useEffect(() => {
+    setSelectedColumns((prev) =>
+      prev.filter(
+        (column) =>
+          !isDateGroupExpression(column.name) || groupBy.includes(column.name),
+      ),
+    );
+  }, [groupBy]);
 
   const aggregationAliases = aggregations.map(getAggregationAlias);
   const pivotAliases = Array.from(
@@ -2877,10 +2960,28 @@ export default function App() {
                   onValueChange={setGroupByDateField}
                 >
                   <SelectTrigger className="w-72 cursor-pointer hover:border-primary/40 transition">
-                    <SelectValue placeholder="Datetime field for DATE(...)" />
+                    <SelectValue placeholder="Select date/datetime field" />
                   </SelectTrigger>
                   <SelectContent>
                     {renderGroupedSelectItems(dateColumns)}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={groupByDateType}
+                  onValueChange={(value) =>
+                    setGroupByDateType(value as DateGroupType)
+                  }
+                >
+                  <SelectTrigger className="w-48 cursor-pointer hover:border-primary/40 transition">
+                    <SelectValue placeholder="Date group type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DATE_GROUP_TYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
 
@@ -2889,7 +2990,10 @@ export default function App() {
                   onClick={() => {
                     if (!groupByDateField) return;
 
-                    const expression = `DATE(${groupByDateField})`;
+                    const expression = getDateGroupExpression(
+                      groupByDateField,
+                      groupByDateType,
+                    );
                     setGroupBy((prev) =>
                       prev.includes(expression) ? prev : [...prev, expression],
                     );
@@ -2915,9 +3019,22 @@ export default function App() {
                   {groupBy.map((item, index) => (
                     <div
                       key={index}
-                      className="flex items-center justify-between border rounded p-3 transition hover:bg-muted/40"
+                      className="flex flex-col gap-3 border rounded p-3 transition hover:bg-muted/40 md:flex-row md:items-center md:justify-between"
                     >
-                      <span>{item}</span>
+                      <div className="flex flex-row items-center gap-3">
+                        <p className="text-sm font-medium">{item}</p>
+                        <input
+                          type="text"
+                          value={getGroupByAlias(item)}
+                          onChange={(event) =>
+                            updateGroupByAlias(item, event.target.value)
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder="Alias (optional)"
+                          className="w-full rounded border px-3 py-2 text-sm"
+                        />
+                      </div>
+
                       <Button
                         variant="destructive"
                         size="sm"
