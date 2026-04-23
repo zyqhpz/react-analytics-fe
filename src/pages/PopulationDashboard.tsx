@@ -177,6 +177,8 @@ const formatCompactNumber = (value: unknown): string => {
   }).format(numericValue);
 };
 
+const NUMERIC_TABLE_VALUE_PATTERN = /^-?\d+(?:\.\d+)?$/;
+
 const toNumeric = (value: unknown): number | null => {
   if (value === null || value === undefined) return null;
   const numericValue = Number(value);
@@ -194,6 +196,21 @@ const formatTableValue = (value: unknown): string => {
     return new Intl.NumberFormat("en-US", {
       maximumFractionDigits: 2,
     }).format(value);
+  }
+  if (typeof value === "bigint") {
+    return value.toLocaleString("en-US");
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!NUMERIC_TABLE_VALUE_PATTERN.test(trimmed)) return value;
+
+    const isNegative = trimmed.startsWith("-");
+    const unsignedValue = isNegative ? trimmed.slice(1) : trimmed;
+    const [integerPart, fractionPart] = unsignedValue.split(".");
+    const formattedInteger = Number(integerPart).toLocaleString("en-US");
+    const withSign = isNegative ? `-${formattedInteger}` : formattedInteger;
+
+    return fractionPart !== undefined ? `${withSign}.${fractionPart}` : withSign;
   }
 
   return String(value);
