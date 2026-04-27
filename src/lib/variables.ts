@@ -34,13 +34,17 @@ const normalizeValue = (value: unknown): QueryVariableValue => {
   return normalizePrimitive(value);
 };
 
+const parseJsonValue = (value: string): unknown => {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+};
+
 export const normalizeVariableMap = (value: unknown): QueryVariableMap => {
   if (typeof value === "string") {
-    try {
-      return normalizeVariableMap(JSON.parse(value) as unknown);
-    } catch {
-      return {};
-    }
+    return normalizeVariableMap(parseJsonValue(value));
   }
 
   if (!isRecord(value)) {
@@ -55,6 +59,112 @@ export const normalizeVariableMap = (value: unknown): QueryVariableMap => {
     acc[key] = normalizeValue(item);
     return acc;
   }, {});
+};
+
+const normalizeVariableOptions = (
+  value: unknown,
+): QueryVariableOption[] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const options = value
+    .map((option) => {
+      if (isRecord(option)) {
+        const rawValue = "value" in option ? option.value : option.label;
+        const value = normalizePrimitive(rawValue);
+        const labelSource =
+          typeof option.label === "string" && option.label.trim()
+            ? option.label
+            : value;
+
+        return {
+          label: String(labelSource ?? ""),
+          value,
+        };
+      }
+
+      const primitive = normalizePrimitive(option);
+      return {
+        label: String(primitive ?? ""),
+        value: primitive,
+      };
+    })
+    .filter((option) => option.label.trim());
+
+  return options.length ? options : undefined;
+};
+
+const normalizeVariableDefinition = (
+  value: unknown,
+  fallbackKey?: string,
+): QueryVariableDefinition | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const rawKey = typeof value.key === "string" ? value.key : fallbackKey;
+  const key = rawKey?.trim();
+
+  if (!key) {
+    return null;
+  }
+
+  const rawType = typeof value.type === "string" ? value.type : "string";
+  const rawLabel = typeof value.label === "string" ? value.label : key;
+  const source = isRecord(value.source)
+    ? {
+        kind:
+          typeof value.source.kind === "string" ? value.source.kind : "none",
+        ...(typeof value.source.sql === "string"
+          ? { sql: value.source.sql }
+          : {}),
+        ...(typeof value.source.value_field === "string"
+          ? { value_field: value.source.value_field }
+          : {}),
+        ...(typeof value.source.label_field === "string"
+          ? { label_field: value.source.label_field }
+          : {}),
+      }
+    : undefined;
+
+  return {
+    key,
+    label: rawLabel.trim() || key,
+    type: rawType.trim() || "string",
+    required: Boolean(value.required),
+    multiple: Boolean(value.multiple),
+    options: normalizeVariableOptions(value.options),
+    ...(source ? { source } : {}),
+  };
+};
+
+export const normalizeQueryVariableDefinitions = (
+  value: unknown,
+): QueryVariableDefinition[] => {
+  if (typeof value === "string") {
+    return normalizeQueryVariableDefinitions(parseJsonValue(value));
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((definition) => normalizeVariableDefinition(definition))
+      .filter(
+        (definition): definition is QueryVariableDefinition =>
+          definition !== null,
+      );
+  }
+
+  if (isRecord(value)) {
+    return Object.entries(value)
+      .map(([key, definition]) => normalizeVariableDefinition(definition, key))
+      .filter(
+        (definition): definition is QueryVariableDefinition =>
+          definition !== null,
+      );
+  }
+
+  return [];
 };
 
 export const normalizeWidgetConfig = (
@@ -94,12 +204,17 @@ export const normalizeWidgetConfig = (
 
 export const getQueryVariableDefinitions = (
   query?: Query | null,
-): QueryVariableDefinition[] =>
-  query?.variable_definitions?.length
-    ? query.variable_definitions
-    : query?.variables?.length
-      ? query.variables
-      : [];
+): QueryVariableDefinition[] => {
+  const variableDefinitions = normalizeQueryVariableDefinitions(
+    query?.variable_definitions,
+  );
+
+  if (variableDefinitions.length) {
+    return variableDefinitions;
+  }
+
+  return normalizeQueryVariableDefinitions(query?.variables);
+};
 
 export const mergeVariableOptions = (
   ...collections: Array<QueryVariableOption[] | undefined>
@@ -220,6 +335,36 @@ export const coercePrimitiveValue = (
 export const stringifyVariableOptionValue = (
   value: QueryVariablePrimitive,
 ): string => (value == null ? "" : String(value));
+
+const VARIABLE_OPTION_SELECT_VALUE_PREFIX = "__variable_option__";
+
+export type VariableSelectOption = QueryVariableOption & {
+  selectValue: string;
+};
+
+export const toVariableSelectOptions = (
+  options: QueryVariableOption[] = [],
+): VariableSelectOption[] =>
+  options.map((option, index) => ({
+    ...option,
+    selectValue: `${VARIABLE_OPTION_SELECT_VALUE_PREFIX}${index}`,
+  }));
+
+export const getVariableSelectValue = (
+  options: VariableSelectOption[],
+  value: QueryVariablePrimitive,
+): string | undefined => {
+  const stringValue = stringifyVariableOptionValue(value);
+  return options.find(
+    (option) => stringifyVariableOptionValue(option.value) === stringValue,
+  )?.selectValue;
+};
+
+export const getVariableOptionFromSelectValue = (
+  options: VariableSelectOption[],
+  value: string,
+): QueryVariableOption | undefined =>
+  options.find((option) => option.selectValue === value);
 
 export const isDateVariableType = (
   definition?: Pick<QueryVariableDefinition, "type" | "multiple">,

@@ -53,8 +53,12 @@ import { useAuth } from "@/context/AuthContext";
 import {
   coercePrimitiveValue,
   formatVariableValueForText,
+  getQueryVariableDefinitions,
+  getVariableOptionFromSelectValue,
+  getVariableSelectValue,
   parseVariableValueFromText,
   stringifyVariableOptionValue,
+  toVariableSelectOptions,
 } from "@/lib/variables";
 import {
   type Query,
@@ -206,6 +210,9 @@ const VARIABLE_TYPE_OPTIONS = [
 ];
 const EMPTY_TEST_VARIABLE_VALUE = "__none__";
 
+const isNonEmptySelectValue = (value: string | null | undefined) =>
+  typeof value === "string" && value.trim().length > 0;
+
 const createEmptyVariableDraft = (
   forceRequired = false,
 ): QueryVariableDraft => ({
@@ -235,6 +242,21 @@ const createStatusesPresetVariableDraft = (
   ],
   sourceKind: "options",
   optionsText: "Success=SUCCESS\nFailed=FAILED",
+});
+
+const createSourcePresetVariableDraft = (): QueryVariableDraft => ({
+  draftId: safeRandomUUID(),
+  key: "source",
+  label: "Source",
+  type: "number",
+  required: true,
+  multiple: false,
+  options: [
+    { label: "LeanX", value: 1 },
+    { label: "Payright", value: 2 },
+  ],
+  sourceKind: "options",
+  optionsText: "LeanX=1\nPayright=2",
 });
 
 const formatVariableOptionsText = (options?: QueryVariableOption[]) =>
@@ -625,11 +647,13 @@ const GroupedFieldSelector = (props: FieldSelectorProps) => {
             {groupIndex > 0 ? <SelectSeparator /> : null}
             <SelectGroup>
               <SelectLabel>{group.label}</SelectLabel>
-              {group.options.map((option) => (
-                <SelectItem key={option.name} value={option.name}>
-                  {option.label}
-                </SelectItem>
-              ))}
+              {group.options
+                .filter((option) => isNonEmptySelectValue(option.name))
+                .map((option) => (
+                  <SelectItem key={option.name} value={option.name}>
+                    {option.label}
+                  </SelectItem>
+                ))}
             </SelectGroup>
           </div>
         ))}
@@ -649,11 +673,13 @@ const ThemedOperatorSelector = (props: OperatorSelectorProps) => {
       <SelectContent>
         <SelectGroup>
           <SelectLabel>Operators</SelectLabel>
-          {options.map((option) => (
-            <SelectItem key={option.name} value={option.name}>
-              {option.label}
-            </SelectItem>
-          ))}
+          {options
+            .filter((option) => isNonEmptySelectValue(option.name))
+            .map((option) => (
+              <SelectItem key={option.name} value={option.name}>
+                {option.label}
+              </SelectItem>
+            ))}
         </SelectGroup>
       </SelectContent>
     </Select>
@@ -824,8 +850,7 @@ export default function App() {
       return acc;
     }, []);
 
-  const hasSelectValue = (value: string | null | undefined) =>
-    typeof value === "string" && value.trim().length > 0;
+  const hasSelectValue = isNonEmptySelectValue;
 
   const stringifyPivotValue = (value: PivotValueValue) => {
     if (value === null) return "null";
@@ -1159,11 +1184,13 @@ export default function App() {
         {groupIndex > 0 ? <SelectSeparator /> : null}
         <SelectGroup>
           <SelectLabel>{group}</SelectLabel>
-          {items.map((column) => (
-            <SelectItem key={column.name} value={column.name}>
-              {column.label}
-            </SelectItem>
-          ))}
+          {items
+            .filter((column) => hasSelectValue(column.name))
+            .map((column) => (
+              <SelectItem key={column.name} value={column.name}>
+                {column.label}
+              </SelectItem>
+            ))}
         </SelectGroup>
       </div>
     ));
@@ -1309,15 +1336,16 @@ export default function App() {
   // LOAD QUERY INTO BUILDER
   const loadQuery = (query: Query) => {
     const nextQueryType = query.query_type || "visual";
+    const queryVariables = getQueryVariableDefinitions(query);
     setQueryType(nextQueryType);
     setVariables(
-      (query.variables ?? []).map((variable) =>
+      queryVariables.map((variable) =>
         toVariableDraft(variable, nextQueryType === "sql"),
       ),
     );
     setTestVariableInputs(
       Object.fromEntries(
-        (query.variables ?? []).map((variable) => [
+        queryVariables.map((variable) => [
           variable.key,
           formatVariableValueForText(query.applied_variables?.[variable.key]),
         ]),
@@ -2633,6 +2661,30 @@ export default function App() {
             >
               Add `statuses` Preset
             </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setVariables((prev) => {
+                  const existingIndex = prev.findIndex(
+                    (variable) => variable.key.trim() === "source",
+                  );
+                  const preset = createSourcePresetVariableDraft();
+
+                  if (existingIndex >= 0) {
+                    return prev.map((variable, index) =>
+                      index === existingIndex
+                        ? { ...preset, draftId: variable.draftId }
+                        : variable,
+                    );
+                  }
+
+                  return [...prev, preset];
+                })
+              }
+              className="cursor-pointer"
+            >
+              Add `source` Preset
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -2716,40 +2768,63 @@ export default function App() {
                               })}
                             </div>
                           ) : (
-                            <Select
-                              value={
-                                testVariableInputs[variable.key]?.trim() ||
-                                EMPTY_TEST_VARIABLE_VALUE
-                              }
-                              onValueChange={(value) =>
-                                setTestVariableInputs((prev) => ({
-                                  ...prev,
-                                  [variable.key]:
-                                    value === EMPTY_TEST_VARIABLE_VALUE
-                                      ? ""
-                                      : value,
-                                }))
-                              }
-                            >
-                              <SelectTrigger className="w-full">
-                                <SelectValue placeholder="Select value" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value={EMPTY_TEST_VARIABLE_VALUE}>
-                                  None
-                                </SelectItem>
-                                {variableOptions.map((option) => (
-                                  <SelectItem
-                                    key={`${variable.key}-${option.label}-${option.value}`}
-                                    value={stringifyVariableOptionValue(
-                                      option.value,
-                                    )}
-                                  >
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            (() => {
+                              const selectOptions =
+                                toVariableSelectOptions(variableOptions);
+                              const testVariableInput =
+                                testVariableInputs[variable.key]?.trim();
+                              const selectedValue = testVariableInput
+                                ? getVariableSelectValue(
+                                    selectOptions,
+                                    testVariableInput,
+                                  )
+                                : undefined;
+
+                              return (
+                                <Select
+                                  value={
+                                    selectedValue ?? EMPTY_TEST_VARIABLE_VALUE
+                                  }
+                                  onValueChange={(value) => {
+                                    const selectedOption =
+                                      getVariableOptionFromSelectValue(
+                                        selectOptions,
+                                        value,
+                                      );
+
+                                    setTestVariableInputs((prev) => ({
+                                      ...prev,
+                                      [variable.key]:
+                                        value === EMPTY_TEST_VARIABLE_VALUE ||
+                                        !selectedOption
+                                          ? ""
+                                          : stringifyVariableOptionValue(
+                                              selectedOption.value,
+                                            ),
+                                    }));
+                                  }}
+                                >
+                                  <SelectTrigger className="w-full">
+                                    <SelectValue placeholder="Select value" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem
+                                      value={EMPTY_TEST_VARIABLE_VALUE}
+                                    >
+                                      None
+                                    </SelectItem>
+                                    {selectOptions.map((option) => (
+                                      <SelectItem
+                                        key={`${variable.key}-${option.label}-${option.selectValue}`}
+                                        value={option.selectValue}
+                                      >
+                                        {option.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              );
+                            })()
                           )
                         ) : variable.type === "date" ||
                           variable.type === "datetime" ? (
@@ -3648,11 +3723,13 @@ export default function App() {
                   <SelectValue placeholder="Select department" />
                 </SelectTrigger>
                 <SelectContent>
-                  {departments.map((department) => (
-                    <SelectItem key={department.id} value={department.slug}>
-                      {department.name}
-                    </SelectItem>
-                  ))}
+                  {departments
+                    .filter((department) => hasSelectValue(department.slug))
+                    .map((department) => (
+                      <SelectItem key={department.id} value={department.slug}>
+                        {department.name}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
