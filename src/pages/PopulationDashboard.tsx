@@ -70,12 +70,17 @@ import {
   coercePrimitiveValue,
   filterVariablesForDefinitions,
   formatVariableValueForText,
+  getQueryVariableDefinitions,
+  getVariableOptionFromSelectValue,
+  getVariableSelectValue,
   mergeVariableOptions,
+  normalizeQueryVariableDefinitions,
   normalizeVariableMap,
   normalizeWidgetConfig,
   parseVariableValueFromText,
   resolveWidgetVariables,
   stringifyVariableOptionValue,
+  toVariableSelectOptions,
 } from "@/lib/variables";
 import {
   type DashboardSummary,
@@ -170,6 +175,9 @@ type ChartPreviewSummary = {
 
 const TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 const DEFAULT_TABLE_PAGE_SIZE = 25;
+
+const hasSelectValue = (value: string | null | undefined) =>
+  typeof value === "string" && value.trim().length > 0;
 
 const getWidgetTablePageSize = (config?: DashboardWidgetConfig) => {
   const parsedValue = Number(config?.table_page_size);
@@ -541,29 +549,48 @@ function VariableValueInput({
       );
     }
 
+    const selectOptions = toVariableSelectOptions(options);
+    const currentSelectValue = Array.isArray(value)
+      ? (value[0] ?? null)
+      : (value ?? null);
+    const selectedValue = hasVariableValue(currentSelectValue)
+      ? getVariableSelectValue(selectOptions, currentSelectValue)
+      : undefined;
+
     return (
       <Select
         disabled={disabled}
-        value={stringifyVariableOptionValue(
-          Array.isArray(value) ? (value[0] ?? null) : (value ?? null),
-        )}
-        onValueChange={(nextValue) =>
+        value={selectedValue}
+        onValueChange={(nextValue) => {
+          if (nextValue === "__all__") {
+            onChange(null);
+            return;
+          }
+
+          const selectedOption = getVariableOptionFromSelectValue(
+            selectOptions,
+            nextValue,
+          );
+
           onChange(
-            nextValue && nextValue !== "__all__"
-              ? coercePrimitiveValue(nextValue, definition)
+            selectedOption
+              ? coercePrimitiveValue(
+                stringifyVariableOptionValue(selectedOption.value),
+                definition,
+              )
               : null,
-          )
-        }
+          );
+        }}
       >
         <SelectTrigger className={className}>
           <SelectValue placeholder={placeholder ?? "Select value"} />
         </SelectTrigger>
         <SelectContent className="border-white/10 bg-slate-950/95 text-slate-100">
           <SelectItem value="__all__">All</SelectItem>
-          {options.map((option) => (
+          {selectOptions.map((option) => (
             <SelectItem
-              key={`${definition.key}-${option.label}-${option.value}`}
-              value={stringifyVariableOptionValue(option.value)}
+              key={`${definition.key}-${option.label}-${option.selectValue}`}
+              value={option.selectValue}
             >
               {option.label}
             </SelectItem>
@@ -1925,7 +1952,9 @@ export default function PopulationDashboard() {
   const loadDashboardOptions = useCallback(
     async (options?: { preserveSelection?: boolean }) => {
       const preserveSelection = options?.preserveSelection ?? true;
-      const dashboards = await fetchDashboards(currentUser?.role?.name);
+      const dashboards = (
+        await fetchDashboards(currentUser?.role?.name)
+      ).filter((dashboard) => hasSelectValue(dashboard.id));
 
       setDashboardOptions(dashboards);
 
@@ -2573,7 +2602,7 @@ export default function PopulationDashboard() {
     const filterMetadata = await fetchQueryFilters(queryId);
 
     return enrichVariableDefinitions(
-      filterMetadata?.variables ?? [],
+      normalizeQueryVariableDefinitions(filterMetadata?.variables),
       filterMetadata?.filter_data ?? {},
     );
   }, []);
@@ -2876,8 +2905,7 @@ export default function PopulationDashboard() {
 
         if (
           selectedQuery &&
-          (selectedQuery.variable_definitions?.length ||
-            selectedQuery.variables?.length)
+          getQueryVariableDefinitions(selectedQuery).length
         ) {
           if (cancelled) return;
 
@@ -3770,43 +3798,74 @@ export default function PopulationDashboard() {
                                   }
                                 />
                               ) : (
-                                <Select
-                                  value={stringifyVariableOptionValue(
-                                    Array.isArray(currentValue)
-                                      ? (currentValue[0] ?? null)
-                                      : (currentValue ?? null),
-                                  )}
-                                  onValueChange={(value) =>
-                                    updateDashboardVariableValue(
-                                      definition,
-                                      value && value !== "__all__"
-                                        ? coercePrimitiveValue(
-                                          value,
-                                          definition,
-                                        )
-                                        : null,
+                                (() => {
+                                  const selectOptions = toVariableSelectOptions(
+                                    definition.options ?? [],
+                                  );
+                                  const currentSelectValue = Array.isArray(
+                                    currentValue,
+                                  )
+                                    ? (currentValue[0] ?? null)
+                                    : (currentValue ?? null);
+                                  const selectedValue = hasVariableValue(
+                                    currentSelectValue,
+                                  )
+                                    ? getVariableSelectValue(
+                                      selectOptions,
+                                      currentSelectValue,
                                     )
-                                  }
-                                >
-                                  <SelectTrigger className="mt-3 w-full border-white/10 bg-slate-950/60 text-slate-100">
-                                    <SelectValue placeholder="Select value" />
-                                  </SelectTrigger>
-                                  <SelectContent className="border-white/10 bg-slate-950/95 text-slate-100">
-                                    <SelectItem value="__all__">All</SelectItem>
-                                    {(definition.options ?? []).map(
-                                      (option) => (
-                                        <SelectItem
-                                          key={`${definition.key}-${option.label}-${option.value}`}
-                                          value={stringifyVariableOptionValue(
-                                            option.value,
-                                          )}
-                                        >
-                                          {option.label}
+                                    : undefined;
+
+                                  return (
+                                    <Select
+                                      value={selectedValue}
+                                      onValueChange={(value) => {
+                                        if (value === "__all__") {
+                                          updateDashboardVariableValue(
+                                            definition,
+                                            null,
+                                          );
+                                          return;
+                                        }
+
+                                        const selectedOption =
+                                          getVariableOptionFromSelectValue(
+                                            selectOptions,
+                                            value,
+                                          );
+
+                                        updateDashboardVariableValue(
+                                          definition,
+                                          selectedOption
+                                            ? coercePrimitiveValue(
+                                              stringifyVariableOptionValue(
+                                                selectedOption.value,
+                                              ),
+                                              definition,
+                                            )
+                                            : null,
+                                        );
+                                      }}
+                                    >
+                                      <SelectTrigger className="mt-3 w-full border-white/10 bg-slate-950/60 text-slate-100">
+                                        <SelectValue placeholder="Select value" />
+                                      </SelectTrigger>
+                                      <SelectContent className="border-white/10 bg-slate-950/95 text-slate-100">
+                                        <SelectItem value="__all__">
+                                          All
                                         </SelectItem>
-                                      ),
-                                    )}
-                                  </SelectContent>
-                                </Select>
+                                        {selectOptions.map((option) => (
+                                          <SelectItem
+                                            key={`${definition.key}-${option.label}-${option.selectValue}`}
+                                            value={option.selectValue}
+                                          >
+                                            {option.label}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  );
+                                })()
                               )
                             ) : definition.type === "date" ||
                               definition.type === "datetime" ? (
@@ -4230,12 +4289,12 @@ export default function PopulationDashboard() {
                     <label
                       key={chartTypeOption.value}
                       className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center transition ${isSelected
-                          ? isCompatible
-                            ? "border-emerald-300/50 bg-emerald-500/15 text-emerald-100 shadow-[0_0_0_1px_rgba(110,231,183,0.2)]"
-                            : "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
-                          : isCompatible
-                            ? "cursor-pointer border-emerald-400/35 bg-emerald-500/8 text-emerald-100 hover:bg-emerald-500/14"
-                            : "cursor-pointer border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
+                        ? isCompatible
+                          ? "border-emerald-300/50 bg-emerald-500/15 text-emerald-100 shadow-[0_0_0_1px_rgba(110,231,183,0.2)]"
+                          : "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
+                        : isCompatible
+                          ? "cursor-pointer border-emerald-400/35 bg-emerald-500/8 text-emerald-100 hover:bg-emerald-500/14"
+                          : "cursor-pointer border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
                         }`}
                     >
                       <input
@@ -4358,10 +4417,10 @@ export default function PopulationDashboard() {
                 </p>
                 <span
                   className={`rounded-md px-2 py-1 text-xs ${selectedChartPreview.status === "ready"
-                      ? "border border-emerald-300/30 bg-emerald-500/10 text-emerald-100"
-                      : selectedChartPreview.status === "fallback"
-                        ? "border border-amber-300/30 bg-amber-500/10 text-amber-100"
-                        : "border border-white/15 bg-slate-900/70 text-slate-300"
+                    ? "border border-emerald-300/30 bg-emerald-500/10 text-emerald-100"
+                    : selectedChartPreview.status === "fallback"
+                      ? "border border-amber-300/30 bg-amber-500/10 text-amber-100"
+                      : "border border-white/15 bg-slate-900/70 text-slate-300"
                     }`}
                 >
                   {selectedChartPreview.status === "ready"
