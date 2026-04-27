@@ -148,6 +148,10 @@ type QueryBuilderField = Field & {
   enumValues?: string[];
 };
 
+type QueryBuilderValueEditorContext = {
+  variableKeyOptions?: string[];
+};
+
 type ColumnOption = {
   group: string;
   label: string;
@@ -512,6 +516,70 @@ const DateTimeValueEditor = (props: ValueEditorProps) => {
   );
 };
 
+const EMPTY_VARIABLE_KEY_OPTIONS: string[] = [];
+
+const getVariableKeyOptionsFromContext = (context: unknown): string[] => {
+  if (!context || typeof context !== "object") {
+    return EMPTY_VARIABLE_KEY_OPTIONS;
+  }
+
+  const variableKeyOptions = (context as QueryBuilderValueEditorContext)
+    .variableKeyOptions;
+
+  return Array.isArray(variableKeyOptions)
+    ? variableKeyOptions
+    : EMPTY_VARIABLE_KEY_OPTIONS;
+};
+
+const VariableAwareValueEditor = (props: ValueEditorProps) => {
+  const { context, handleOnChange, value, valueSource } = props;
+  const variableKeyOptions = getVariableKeyOptionsFromContext(context);
+  const currentValue = String(value ?? "");
+  const selectedValue =
+    valueSource === "field" && variableKeyOptions.includes(currentValue)
+      ? currentValue
+      : undefined;
+
+  useEffect(() => {
+    if (valueSource !== "field") {
+      return;
+    }
+
+    if (currentValue && !variableKeyOptions.includes(currentValue)) {
+      handleOnChange("");
+    }
+  }, [currentValue, handleOnChange, valueSource, variableKeyOptions]);
+
+  if (valueSource === "field") {
+    return (
+      <Select
+        value={selectedValue}
+        onValueChange={(value) =>
+          handleOnChange(value === "__empty__" ? "" : value)
+        }
+      >
+        <SelectTrigger className="min-w-40 cursor-pointer hover:border-primary/40 transition">
+          <SelectValue placeholder="Select variable" />
+        </SelectTrigger>
+        <SelectContent>
+          {variableKeyOptions.map((variableKey) => (
+            <SelectItem key={variableKey} value={variableKey}>
+              {variableKey}
+            </SelectItem>
+          ))}
+          {!variableKeyOptions.length ? (
+            <SelectItem value="__empty__" disabled>
+              No variables defined
+            </SelectItem>
+          ) : null}
+        </SelectContent>
+      </Select>
+    );
+  }
+
+  return <DateTimeValueEditor {...props} />;
+};
+
 const VariableValueSourceSelector = (props: ValueSourceSelectorProps) => (
   <Select value={props.value} onValueChange={props.handleOnChange}>
     <SelectTrigger className="min-w-32 cursor-pointer hover:border-primary/40 transition">
@@ -664,6 +732,16 @@ export default function App() {
   const [skipNextUrlSync, setSkipNextUrlSync] = useState(false);
 
   const navigate = useNavigate();
+
+  const variableKeyOptions = useMemo(
+    () => variables.map((variable) => variable.key.trim()).filter(Boolean),
+    [variables],
+  );
+
+  const queryBuilderValueEditorContext = useMemo(
+    () => ({ variableKeyOptions }),
+    [variableKeyOptions],
+  );
 
   if (isViewer) {
     return <Navigate to="/dashboard" replace />;
@@ -892,57 +970,6 @@ export default function App() {
       ),
     [normalizedVariables],
   );
-
-  const variableKeyOptions = variables
-    .map((variable) => variable.key.trim())
-    .filter(Boolean);
-
-  const VariableAwareValueEditor = (props: ValueEditorProps) => {
-    const currentValue = String(props.value ?? "");
-    const selectedValue =
-      props.valueSource === "field" && variableKeyOptions.includes(currentValue)
-        ? currentValue
-        : undefined;
-
-    useEffect(() => {
-      if (props.valueSource !== "field") {
-        return;
-      }
-
-      if (currentValue && !variableKeyOptions.includes(currentValue)) {
-        props.handleOnChange("");
-      }
-    }, [currentValue, props, variableKeyOptions]);
-
-    if (props.valueSource === "field") {
-      return (
-        <Select
-          value={selectedValue}
-          onValueChange={(value) =>
-            props.handleOnChange(value === "__empty__" ? "" : value)
-          }
-        >
-          <SelectTrigger className="min-w-40 cursor-pointer hover:border-primary/40 transition">
-            <SelectValue placeholder="Select variable" />
-          </SelectTrigger>
-          <SelectContent>
-            {variableKeyOptions.map((variableKey) => (
-              <SelectItem key={variableKey} value={variableKey}>
-                {variableKey}
-              </SelectItem>
-            ))}
-            {!variableKeyOptions.length ? (
-              <SelectItem value="__empty__" disabled>
-                No variables defined
-              </SelectItem>
-            ) : null}
-          </SelectContent>
-        </Select>
-      );
-    }
-
-    return <DateTimeValueEditor {...props} />;
-  };
 
   const resetVisualBuilderState = () => {
     setJoins([]);
@@ -3350,6 +3377,7 @@ export default function App() {
                   query={query}
                   onQueryChange={setQuery}
                   getValueSources={() => ["value", "field"]}
+                  context={queryBuilderValueEditorContext}
                   controlElements={{
                     fieldSelector: GroupedFieldSelector,
                     operatorSelector: ThemedOperatorSelector,
@@ -3394,6 +3422,7 @@ export default function App() {
                     query={having}
                     onQueryChange={setHaving}
                     getValueSources={() => ["value", "field"]}
+                    context={queryBuilderValueEditorContext}
                     controlElements={{
                       fieldSelector: GroupedFieldSelector,
                       operatorSelector: ThemedOperatorSelector,
