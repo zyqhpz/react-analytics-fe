@@ -91,7 +91,7 @@ import {
   type QueryVariableMap,
   type QueryVariableOption,
 } from "@/types/query";
-import { LayoutDashboard, LoaderCircle } from "lucide-react";
+import { ChevronDown, LayoutDashboard, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 
 type BackendWidget = {
@@ -449,8 +449,8 @@ function MultiVariableCombobox({
                 allSelected
                   ? []
                   : options.map((option) =>
-                      stringifyVariableOptionValue(option.value),
-                    ),
+                    stringifyVariableOptionValue(option.value),
+                  ),
               )
             }
           >
@@ -476,8 +476,8 @@ function MultiVariableCombobox({
                         onChange(
                           checked
                             ? selectedValues.filter(
-                                (value) => value !== optionValue,
-                              )
+                              (value) => value !== optionValue,
+                            )
                             : [...selectedValues, optionValue],
                         )
                       }
@@ -759,8 +759,8 @@ const inferPreviewShape = (data: QueryRow[], schema?: string[]) => {
   const valueKeys = numericKeys.length
     ? numericKeys
     : keys
-        .filter((key) => key !== categoryKey)
-        .slice(0, Math.max(keys.length - 1, 1));
+      .filter((key) => key !== categoryKey)
+      .slice(0, Math.max(keys.length - 1, 1));
 
   return {
     keys,
@@ -1497,54 +1497,54 @@ export function buildOption(
       .series as any[]) ?? [];
   const cartesianSeries = isMultiCartesianType
     ? valueKeys.map((key, index) => {
-        const palette =
-          CARTESIAN_SERIES_PALETTE[index % CARTESIAN_SERIES_PALETTE.length];
+      const palette =
+        CARTESIAN_SERIES_PALETTE[index % CARTESIAN_SERIES_PALETTE.length];
 
-        return {
-          type: isStackedArea
-            ? ("line" as const)
-            : isStackedBar
-              ? ("bar" as const)
-              : (selectedType as any),
-          name: key,
-          data: data.map((row) => toNumeric(row[key]) ?? 0),
-          stack: isStackedArea || isStackedBar ? "total" : undefined,
-          smooth: selectedType === "line" || isStackedArea,
-          barMaxWidth: selectedType === "bar" || isStackedBar ? 42 : undefined,
-          emphasis: {
-            focus: "series" as const,
-          },
-          itemStyle: {
-            color: palette.solid,
-            borderColor:
-              selectedType === "bar" || isStackedBar
-                ? palette.border
-                : palette.solid,
-            borderWidth: selectedType === "bar" || isStackedBar ? 1.25 : 0,
-            borderRadius:
-              selectedType === "bar" ? [8, 8, 0, 0] : isStackedBar ? 0 : 0,
-          },
-          lineStyle: {
-            width: 3,
-            color: palette.stroke,
-          },
-          areaStyle:
-            selectedType === "line" || isStackedArea
-              ? {
-                  color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                    {
-                      offset: 0,
-                      color: palette.fillTop,
-                    },
-                    {
-                      offset: 1,
-                      color: palette.fillBottom,
-                    },
-                  ]),
-                }
-              : undefined,
-        };
-      })
+      return {
+        type: isStackedArea
+          ? ("line" as const)
+          : isStackedBar
+            ? ("bar" as const)
+            : (selectedType as any),
+        name: key,
+        data: data.map((row) => toNumeric(row[key]) ?? 0),
+        stack: isStackedArea || isStackedBar ? "total" : undefined,
+        smooth: selectedType === "line" || isStackedArea,
+        barMaxWidth: selectedType === "bar" || isStackedBar ? 42 : undefined,
+        emphasis: {
+          focus: "series" as const,
+        },
+        itemStyle: {
+          color: palette.solid,
+          borderColor:
+            selectedType === "bar" || isStackedBar
+              ? palette.border
+              : palette.solid,
+          borderWidth: selectedType === "bar" || isStackedBar ? 1.25 : 0,
+          borderRadius:
+            selectedType === "bar" ? [8, 8, 0, 0] : isStackedBar ? 0 : 0,
+        },
+        lineStyle: {
+          width: 3,
+          color: palette.stroke,
+        },
+        areaStyle:
+          selectedType === "line" || isStackedArea
+            ? {
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                {
+                  offset: 0,
+                  color: palette.fillTop,
+                },
+                {
+                  offset: 1,
+                  color: palette.fillBottom,
+                },
+              ]),
+            }
+            : undefined,
+      };
+    })
     : fallbackSeries;
 
   return {
@@ -1589,15 +1589,15 @@ export function buildOption(
     ...(isMultiCartesianType
       ? {}
       : {
-          title: {
-            text: `${selectedType} needs specialized schema`,
-            subtext: "Showing fallback bar series",
-            left: "center",
-            top: 4,
-            textStyle: { color: "#e2e8f0", fontSize: 13, fontWeight: 600 },
-            subtextStyle: { color: "#94a3b8", fontSize: 11 },
-          },
-        }),
+        title: {
+          text: `${selectedType} needs specialized schema`,
+          subtext: "Showing fallback bar series",
+          left: "center",
+          top: 4,
+          textStyle: { color: "#e2e8f0", fontSize: 13, fontWeight: 600 },
+          subtextStyle: { color: "#94a3b8", fontSize: 11 },
+        },
+      }),
   };
 }
 
@@ -1755,9 +1755,9 @@ export default function PopulationDashboard() {
     () =>
       selectedQueryPreview
         ? summarizeQueryShape(
-            selectedQueryPreview.data,
-            selectedQueryPreview.schema,
-          )
+          selectedQueryPreview.data,
+          selectedQueryPreview.schema,
+        )
         : null,
     [selectedQueryPreview],
   );
@@ -2147,10 +2147,10 @@ export default function PopulationDashboard() {
         prev.map((widget) =>
           widget.id === id
             ? {
-                ...widget,
-                data,
-                schema,
-              }
+              ...widget,
+              data,
+              schema,
+            }
             : widget,
         ),
       );
@@ -2593,17 +2593,17 @@ export default function PopulationDashboard() {
       const effectiveConfig = configOverride
         ? normalizedInputConfig
         : normalizeWidgetConfig({
-            ...normalizedInputConfig,
-            variables: Object.entries(
-              normalizedInputConfig.variables ?? {},
-            ).reduce<QueryVariableMap>((acc, [key, value]) => {
-              if (!globalFilterKeySetRef.current.has(key)) {
-                acc[key] = value;
-              }
+          ...normalizedInputConfig,
+          variables: Object.entries(
+            normalizedInputConfig.variables ?? {},
+          ).reduce<QueryVariableMap>((acc, [key, value]) => {
+            if (!globalFilterKeySetRef.current.has(key)) {
+              acc[key] = value;
+            }
 
-              return acc;
-            }, {}),
-          });
+            return acc;
+          }, {}),
+        });
       let variableDefinitions = meta?.variableDefinitions ?? [];
 
       try {
@@ -2678,8 +2678,7 @@ export default function PopulationDashboard() {
 
     if (failures.length) {
       toast.error(
-        `${failures.length} ${
-          failures.length === 1 ? "widget query" : "widget queries"
+        `${failures.length} ${failures.length === 1 ? "widget query" : "widget queries"
         } failed to load.`,
       );
     }
@@ -2801,9 +2800,9 @@ export default function PopulationDashboard() {
       setWidgetSettings((prev) =>
         prev
           ? {
-              ...prev,
-              config: normalizeWidgetConfig(updater(prev.config)),
-            }
+            ...prev,
+            config: normalizeWidgetConfig(updater(prev.config)),
+          }
           : prev,
       );
     },
@@ -3345,8 +3344,7 @@ export default function PopulationDashboard() {
 
         if (!isStaleRequest() && failedQueryIds.length) {
           toast.error(
-            `${failedQueryIds.length} ${
-              failedQueryIds.length === 1 ? "widget query" : "widget queries"
+            `${failedQueryIds.length} ${failedQueryIds.length === 1 ? "widget query" : "widget queries"
             } failed to load.`,
           );
         }
@@ -3682,7 +3680,7 @@ export default function PopulationDashboard() {
             </div>
 
             {selectedDashboardId &&
-            dynamicFilterTopology.globalDefinitions.length ? (
+              dynamicFilterTopology.globalDefinitions.length ? (
               <div className="mt-6 rounded-2xl border border-white/10 bg-slate-950/35 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -3758,8 +3756,8 @@ export default function PopulationDashboard() {
                                   selectedValues={
                                     Array.isArray(currentValue)
                                       ? currentValue.map(
-                                          stringifyVariableOptionValue,
-                                        )
+                                        stringifyVariableOptionValue,
+                                      )
                                       : []
                                   }
                                   onChange={(nextValues) =>
@@ -3783,9 +3781,9 @@ export default function PopulationDashboard() {
                                       definition,
                                       value && value !== "__all__"
                                         ? coercePrimitiveValue(
-                                            value,
-                                            definition,
-                                          )
+                                          value,
+                                          definition,
+                                        )
                                         : null,
                                     )
                                   }
@@ -3876,8 +3874,8 @@ export default function PopulationDashboard() {
             ) : null}
 
             {!loadingDashboardStructure &&
-            selectedDashboardId &&
-            widgets.length === 0 ? (
+              selectedDashboardId &&
+              widgets.length === 0 ? (
               <div className="absolute inset-0 flex items-center justify-center rounded-2xl border border-dashed border-white/10 bg-slate-950/40">
                 <div className="max-w-md px-6 text-center">
                   <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-300/20 bg-cyan-500/10">
@@ -4111,8 +4109,8 @@ export default function PopulationDashboard() {
                               selectedValues={
                                 Array.isArray(resolvedWidgetValue)
                                   ? resolvedWidgetValue.map(
-                                      stringifyVariableOptionValue,
-                                    )
+                                    stringifyVariableOptionValue,
+                                  )
                                   : []
                               }
                               onChange={(nextValues) =>
@@ -4218,9 +4216,8 @@ export default function PopulationDashboard() {
                 ) : null}
               </div>
               <div
-                className={`grid grid-cols-2 gap-2 transition md:grid-cols-3 ${
-                  loadingQueryPreview ? "pointer-events-none opacity-70" : ""
-                }`}
+                className={`grid grid-cols-2 gap-2 transition md:grid-cols-3 ${loadingQueryPreview ? "pointer-events-none opacity-70" : ""
+                  }`}
               >
                 {chartTypeOptions.map((chartTypeOption) => {
                   const isSelected =
@@ -4232,15 +4229,14 @@ export default function PopulationDashboard() {
                   return (
                     <label
                       key={chartTypeOption.value}
-                      className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center transition ${
-                        isSelected
+                      className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center transition ${isSelected
                           ? isCompatible
                             ? "border-emerald-300/50 bg-emerald-500/15 text-emerald-100 shadow-[0_0_0_1px_rgba(110,231,183,0.2)]"
                             : "border-cyan-300/40 bg-cyan-500/15 text-cyan-100"
                           : isCompatible
                             ? "cursor-pointer border-emerald-400/35 bg-emerald-500/8 text-emerald-100 hover:bg-emerald-500/14"
                             : "cursor-pointer border-white/15 bg-slate-800/80 text-slate-300 hover:bg-slate-700/70"
-                      }`}
+                        }`}
                     >
                       <input
                         type="radio"
@@ -4275,9 +4271,8 @@ export default function PopulationDashboard() {
             </div>
 
             <div
-              className={`mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4 transition ${
-                loadingQueryPreview ? "animate-pulse" : ""
-              }`}
+              className={`mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4 transition ${loadingQueryPreview ? "animate-pulse" : ""
+                }`}
             >
               <div className="mb-2 flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-100">
@@ -4354,22 +4349,20 @@ export default function PopulationDashboard() {
             </div>
 
             <div
-              className={`mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4 transition ${
-                loadingQueryPreview ? "animate-pulse" : ""
-              }`}
+              className={`mb-6 rounded-xl border border-white/10 bg-slate-800/40 p-4 transition ${loadingQueryPreview ? "animate-pulse" : ""
+                }`}
             >
               <div className="mb-2 flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-100">
                   Chart Preview
                 </p>
                 <span
-                  className={`rounded-md px-2 py-1 text-xs ${
-                    selectedChartPreview.status === "ready"
+                  className={`rounded-md px-2 py-1 text-xs ${selectedChartPreview.status === "ready"
                       ? "border border-emerald-300/30 bg-emerald-500/10 text-emerald-100"
                       : selectedChartPreview.status === "fallback"
                         ? "border border-amber-300/30 bg-amber-500/10 text-amber-100"
                         : "border border-white/15 bg-slate-900/70 text-slate-300"
-                  }`}
+                    }`}
                 >
                   {selectedChartPreview.status === "ready"
                     ? "Ready"
