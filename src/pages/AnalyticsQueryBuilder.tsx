@@ -84,6 +84,7 @@ import { toast } from "sonner";
 import { format as formatSqlString } from "sql-formatter";
 
 import type { GetSchemasResponse } from "@/api/queries";
+import { safeRandomUUID } from "@/lib/utils";
 import type {
   Aggregation,
   ColumnSchema,
@@ -204,7 +205,7 @@ const EMPTY_TEST_VARIABLE_VALUE = "__none__";
 const createEmptyVariableDraft = (
   forceRequired = false,
 ): QueryVariableDraft => ({
-  draftId: crypto.randomUUID(),
+  draftId: safeRandomUUID(),
   key: "",
   label: "",
   type: "string",
@@ -218,7 +219,7 @@ const createEmptyVariableDraft = (
 const createStatusesPresetVariableDraft = (
   forceRequired = false,
 ): QueryVariableDraft => ({
-  draftId: crypto.randomUUID(),
+  draftId: safeRandomUUID(),
   key: "statuses",
   label: "Status",
   type: "string",
@@ -285,7 +286,7 @@ const toVariableDraft = (
     ? {
         ...variable,
         required: forceRequired || Boolean(variable.required),
-        draftId: crypto.randomUUID(),
+        draftId: safeRandomUUID(),
         sourceKind:
           variable.source?.kind === "sql"
             ? "sql"
