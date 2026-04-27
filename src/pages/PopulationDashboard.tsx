@@ -3606,7 +3606,7 @@ export default function PopulationDashboard() {
             </div>
 
             <div className="mt-6 flex flex-wrap gap-3">
-              {canManageDashboardMeta ? (
+              {!isViewer && canManageDashboardMeta ? (
                 <Button
                   onClick={() => setShowCreateDashboardModal(true)}
                   variant="outline"
@@ -3616,30 +3616,28 @@ export default function PopulationDashboard() {
                 </Button>
               ) : null}
 
-              <Button
-                onClick={() => {
-                  if (isViewer) {
-                    toast.error("VIEWER cannot add charts.");
-                    return;
-                  }
+              {!isViewer ? (
+                <Button
+                  onClick={() => {
+                    setShowModal(true);
+                  }}
+                  variant="outline"
+                  className="rounded-xl border-emerald-400/30 bg-emerald-500/20 text-emerald-100 shadow-sm hover:bg-emerald-500/30 hover:text-emerald-100"
+                >
+                  + Add Chart
+                </Button>
+              ) : null}
 
-                  setShowModal(true);
-                }}
-                disabled={isViewer}
-                variant="outline"
-                className="rounded-xl border-emerald-400/30 bg-emerald-500/20 text-emerald-100 shadow-sm hover:bg-emerald-500/30 hover:text-emerald-100"
-              >
-                + Add Chart
-              </Button>
-
-              <Button
-                onClick={saveDashboard}
-                disabled={saving || isViewer}
-                variant="outline"
-                className="rounded-xl border-indigo-300/30 bg-indigo-500/25 text-indigo-50 hover:bg-indigo-500/35 hover:text-indigo-50 disabled:opacity-60"
-              >
-                {saving ? "Saving..." : "Save Dashboard"}
-              </Button>
+              {!isViewer ? (
+                <Button
+                  onClick={saveDashboard}
+                  disabled={saving}
+                  variant="outline"
+                  className="rounded-xl border-indigo-300/30 bg-indigo-500/25 text-indigo-50 hover:bg-indigo-500/35 hover:text-indigo-50 disabled:opacity-60"
+                >
+                  {saving ? "Saving..." : "Save Dashboard"}
+                </Button>
+              ) : null}
 
               <Button
                 onClick={() =>
@@ -3656,21 +3654,17 @@ export default function PopulationDashboard() {
                   : "Refresh Dashboard"}
               </Button>
 
-              <Button
-                variant="outline"
-                className="rounded-xl border-white/15 bg-slate-700/45 text-slate-100 hover:bg-slate-700/65 hover:text-slate-100"
-                onClick={() => {
-                  if (isViewer) {
-                    toast.error("VIEWER cannot open Query Builder.");
-                    return;
-                  }
-
-                  navigate("/query-builder");
-                }}
-                disabled={isViewer}
-              >
-                Open Query Builder
-              </Button>
+              {!isViewer ? (
+                <Button
+                  variant="outline"
+                  className="rounded-xl border-white/15 bg-slate-700/45 text-slate-100 hover:bg-slate-700/65 hover:text-slate-100"
+                  onClick={() => {
+                    navigate("/query-builder");
+                  }}
+                >
+                  Open Query Builder
+                </Button>
+              ) : null}
 
               {/* <Button
                 asChild
