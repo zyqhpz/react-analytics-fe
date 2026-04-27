@@ -167,6 +167,93 @@ type ChartPreviewSummary = {
   sampleItems: string[];
 };
 
+const TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+const DEFAULT_TABLE_PAGE_SIZE = 25;
+
+const getWidgetTablePageSize = (config?: DashboardWidgetConfig) => {
+  const parsedValue = Number(config?.table_page_size);
+
+  return TABLE_PAGE_SIZE_OPTIONS.includes(
+    parsedValue as (typeof TABLE_PAGE_SIZE_OPTIONS)[number],
+  )
+    ? parsedValue
+    : DEFAULT_TABLE_PAGE_SIZE;
+};
+
+function WidgetHeaderControls({
+  widgetId,
+  type,
+  tablePageSize,
+  onTablePageSizeChange,
+}: {
+  widgetId: string;
+  type: ChartType;
+  tablePageSize: number;
+  onTablePageSizeChange: (widgetId: string, pageSize: number) => void;
+}) {
+  return (
+    <div className="relative z-30 flex items-center gap-2">
+      {type === "table" ? (
+        <Select
+          value={String(tablePageSize)}
+          onValueChange={(value) =>
+            onTablePageSizeChange(widgetId, Number(value))
+          }
+        >
+          <SelectTrigger
+            size="sm"
+            className="h-8 border-white/15 bg-slate-950/80 px-1.5 text-xs text-slate-100 hover:bg-slate-900 [&_svg]:text-slate-300"
+            aria-label="Table size"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="border-white/10 bg-slate-900 text-slate-100">
+            {TABLE_PAGE_SIZE_OPTIONS.map((size) => (
+              <SelectItem
+                key={size}
+                value={String(size)}
+                className="text-xs text-slate-100 focus:bg-white/10 focus:text-slate-100"
+              >
+                {size} rows
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
+      <button
+        className="widget-menu-toggle flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-white/15 text-slate-200 transition hover:bg-white/10"
+        type="button"
+        aria-label="Widget actions"
+        data-widget-id={widgetId}
+      >
+        ...
+      </button>
+      <div className="widget-menu absolute right-10 top-10 z-40 hidden min-w-36 overflow-hidden rounded-lg border border-white/10 bg-slate-900/95 shadow-lg">
+        <button
+          className="widget-settings block w-full cursor-pointer px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10"
+          type="button"
+          data-widget-id={widgetId}
+        >
+          Filters
+        </button>
+        <button
+          className="export-widget block w-full cursor-pointer px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10"
+          type="button"
+          data-widget-id={widgetId}
+        >
+          Export CSV
+        </button>
+      </div>
+      <button
+        className="delete-widget h-8 w-8 cursor-pointer rounded-md border border-red-400/40 text-sm text-red-300 transition hover:bg-red-500/10 hover:text-red-200"
+        type="button"
+      >
+        X
+      </button>
+    </div>
+  );
+}
+
 const formatCompactNumber = (value: unknown): string => {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return String(value ?? "");
@@ -210,7 +297,9 @@ const formatTableValue = (value: unknown): string => {
     const formattedInteger = Number(integerPart).toLocaleString("en-US");
     const withSign = isNegative ? `-${formattedInteger}` : formattedInteger;
 
-    return fractionPart !== undefined ? `${withSign}.${fractionPart}` : withSign;
+    return fractionPart !== undefined
+      ? `${withSign}.${fractionPart}`
+      : withSign;
   }
 
   return String(value);
@@ -583,17 +672,19 @@ async function mapWithConcurrency<T, R>(
 function TableWidgetView({
   data,
   schema,
+  tablePageSize = DEFAULT_TABLE_PAGE_SIZE,
 }: {
   data: QueryRow[];
   schema?: string[];
+  tablePageSize?: number;
 }) {
   return (
     <DataTable
       data={data}
       columns={getColumns(data, schema)}
       formatValue={formatTableValue}
-      pageSize={25}
-      paginationThreshold={25}
+      pageSize={tablePageSize}
+      paginationThreshold={tablePageSize}
       emptyMessage={
         <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-300">
           No data available.
@@ -1526,6 +1617,10 @@ export default function PopulationDashboard() {
   const queriesRef = useRef<Query[]>([]);
   const dashboardVariablesRef = useRef<QueryVariableMap>({});
   const globalFilterKeySetRef = useRef<Set<string>>(new Set());
+  const headerControlsRootsRef = useRef<Record<string, Root>>({});
+  const widgetTableSizeChangeRef = useRef<
+    (widgetId: string, pageSize: number) => void
+  >(() => undefined);
   const dashboardLoadRequestRef = useRef(0);
   const dashboardLoadAbortRef = useRef<AbortController | null>(null);
 
@@ -2108,12 +2203,14 @@ export default function PopulationDashboard() {
 
   const destroyChart = useCallback((id: string) => {
     const meta = chartsRef.current[id];
-    if (!meta) return;
-    meta.observer?.disconnect?.();
-    meta.instance?.dispose?.();
-    meta.root?.unmount?.();
-    meta.statusRoot?.unmount?.();
+    meta?.observer?.disconnect?.();
+    meta?.instance?.dispose?.();
+    meta?.root?.unmount?.();
+    meta?.statusRoot?.unmount?.();
     delete chartsRef.current[id];
+
+    headerControlsRootsRef.current[id]?.unmount?.();
+    delete headerControlsRootsRef.current[id];
   }, []);
 
   const deleteWidget = useCallback(
@@ -2145,14 +2242,7 @@ export default function PopulationDashboard() {
         <div class="grid-stack-item-content overflow-hidden rounded-2xl border border-white/10 bg-slate-900/45 shadow-[0_20px_45px_rgba(2,6,23,0.45)] backdrop-blur-xl flex flex-col">
           <div class="px-4 py-3 border-b border-white/10 font-semibold text-slate-100 flex justify-between items-center gap-3">
             <span class="truncate" data-widget-title="${id}">${title}</span>
-            <div class="relative z-30 flex items-center gap-2">
-              <button class="widget-menu-toggle flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-white/15 text-slate-200 transition hover:bg-white/10" type="button" aria-label="Widget actions" data-widget-id="${id}">...</button>
-              <div class="widget-menu absolute right-0 top-10 z-40 hidden min-w-36 overflow-hidden rounded-lg border border-white/10 bg-slate-900/95 shadow-lg">
-                <button class="widget-settings block w-full cursor-pointer px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10" type="button" data-widget-id="${id}">Filters</button>
-                <button class="export-widget block w-full cursor-pointer px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10" type="button" data-widget-id="${id}">Export CSV</button>
-              </div>
-              <button class="delete-widget h-8 w-8 cursor-pointer rounded-md border border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200 transition text-sm" type="button">X</button>
-            </div>
+            <div data-widget-header-controls="${id}"></div>
           </div>
           <div class="relative flex flex-1 min-h-0 flex-col">
             <div id="${id}" class="flex-1 min-h-50"></div>
@@ -2230,21 +2320,61 @@ export default function PopulationDashboard() {
     chartsRef.current[id]?.statusRoot?.render(null);
   }, []);
 
+  const renderWidgetHeaderControls = useCallback(
+    (id: string, type: ChartType, config?: DashboardWidgetConfig) => {
+      const mountEl = document.querySelector<HTMLElement>(
+        `[data-widget-header-controls="${id}"]`,
+      );
+
+      if (!mountEl) {
+        return;
+      }
+
+      const root = headerControlsRootsRef.current[id] ?? createRoot(mountEl);
+      headerControlsRootsRef.current[id] = root;
+
+      root.render(
+        <WidgetHeaderControls
+          widgetId={id}
+          type={type}
+          tablePageSize={getWidgetTablePageSize(config)}
+          onTablePageSizeChange={(widgetId, pageSize) =>
+            widgetTableSizeChangeRef.current(widgetId, pageSize)
+          }
+        />,
+      );
+    },
+    [],
+  );
+
   /**
    * Initialize chart instance
    * Chart now renders directly from API query.data
    */
   const initChart = useCallback(
-    (id: string, type: ChartType, data: QueryRow[] = [], schema?: string[]) => {
+    (
+      id: string,
+      type: ChartType,
+      data: QueryRow[] = [],
+      schema?: string[],
+      config?: DashboardWidgetConfig,
+    ) => {
       const el = document.getElementById(id);
       if (!el) return;
 
       destroyChart(id);
       setWidgetBodyMode(id, type);
+      renderWidgetHeaderControls(id, type, config);
 
       if (type === "table") {
         const root = createRoot(el);
-        root.render(<TableWidgetView data={data} schema={schema} />);
+        root.render(
+          <TableWidgetView
+            data={data}
+            schema={schema}
+            tablePageSize={getWidgetTablePageSize(config)}
+          />,
+        );
         chartsRef.current[id] = { type, root };
         return;
       }
@@ -2262,8 +2392,46 @@ export default function PopulationDashboard() {
         observer,
       };
     },
-    [destroyChart, setWidgetBodyMode],
+    [destroyChart, renderWidgetHeaderControls, setWidgetBodyMode],
   );
+
+  const handleWidgetTablePageSizeChange = useCallback(
+    (widgetId: string, pageSize: number) => {
+      const widget = widgetsRef.current.find((item) => item.id === widgetId);
+      if (!widget || widget.chartType !== "table") {
+        return;
+      }
+
+      const nextConfig = normalizeWidgetConfig({
+        ...(widgetsMetaRef.current[widgetId]?.config ?? widget.config ?? {}),
+        table_page_size: pageSize,
+      });
+
+      const existingMeta = widgetsMetaRef.current[widgetId];
+      if (existingMeta) {
+        widgetsMetaRef.current[widgetId] = {
+          ...existingMeta,
+          config: nextConfig,
+        };
+      }
+
+      setWidgets((prev) =>
+        prev.map((item) =>
+          item.id === widgetId ? { ...item, config: nextConfig } : item,
+        ),
+      );
+
+      initChart(
+        widgetId,
+        widget.chartType,
+        widget.data ?? [],
+        widget.schema,
+        nextConfig,
+      );
+    },
+    [initChart],
+  );
+  widgetTableSizeChangeRef.current = handleWidgetTablePageSizeChange;
 
   const setWidgetLoading = useCallback(
     (id: string, type: ChartType) => {
@@ -2351,7 +2519,7 @@ export default function PopulationDashboard() {
 
         if (type === "table") {
           clearWidgetStatus(id);
-          initChart(id, type, data, schema);
+          initChart(id, type, data, schema, widgetsMetaRef.current[id]?.config);
           return;
         }
 
@@ -2386,8 +2554,13 @@ export default function PopulationDashboard() {
             : widget,
         ),
       );
+      renderWidgetHeaderControls(
+        widgetId,
+        existingMeta?.chartType ?? "table",
+        normalizedConfig,
+      );
     },
-    [],
+    [renderWidgetHeaderControls],
   );
 
   const loadWidgetVariableDefinitions = useCallback(async (queryId: string) => {
@@ -2801,7 +2974,7 @@ export default function PopulationDashboard() {
         return;
       }
 
-      initChart(id, type, []);
+      initChart(id, type, [], undefined, widgetsMetaRef.current[id]?.config);
       const resolvedVariables = resolveWidgetVariables(
         dashboardVariablesRef.current,
         {},
@@ -3085,7 +3258,13 @@ export default function PopulationDashboard() {
 
         requestAnimationFrame(() => {
           for (const widget of loadedWidgets) {
-            initChart(widget.id, widget.chartType, []);
+            initChart(
+              widget.id,
+              widget.chartType,
+              [],
+              undefined,
+              widget.config,
+            );
 
             if (widget.queryId) {
               const meta = widgetsMetaRef.current[widget.id];

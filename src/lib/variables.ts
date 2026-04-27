@@ -77,8 +77,16 @@ export const normalizeWidgetConfig = (
         {},
       )
     : {};
+  const rawTablePageSize = value.table_page_size;
+  const normalizedTablePageSize =
+    typeof rawTablePageSize === "number" &&
+    Number.isFinite(rawTablePageSize) &&
+    rawTablePageSize > 0
+      ? Math.floor(rawTablePageSize)
+      : undefined;
 
   return {
+    table_page_size: normalizedTablePageSize,
     variables: normalizeVariableMap(value.variables),
     variable_mapping: variableMapping,
   };

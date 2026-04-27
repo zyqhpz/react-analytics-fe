@@ -29,6 +29,7 @@ export interface DashboardSummary {
 }
 
 export type DashboardWidgetConfig = {
+  table_page_size?: number;
   variables?: QueryVariableMap;
   variable_mapping?: Record<string, string>;
 };
