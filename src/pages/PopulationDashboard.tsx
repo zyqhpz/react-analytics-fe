@@ -14,7 +14,8 @@ import {
   type ReactNode,
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Link, useNavigate } from "react-router-dom";
+import { IoIosInformationCircleOutline } from "react-icons/io";
+import { useNavigate } from "react-router-dom";
 import { v7 as uuidv7 } from "uuid";
 
 import {
@@ -27,10 +28,29 @@ import {
   setSelectedDashboardId,
   updateDashboard,
 } from "@/api/dashboard";
-import { fetchQueryWithData, fetchSavedQueries } from "@/api/queries";
+import {
+  fetchQueryFilters,
+  fetchQueryWithData,
+  fetchSavedQueries,
+} from "@/api/queries";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
 import { DataTable } from "@/components/DataTable";
+import { VariableDatePicker } from "@/components/VariableDatePicker";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -39,17 +59,42 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useAuth } from "@/context/AuthContext";
+import {
+  coercePrimitiveValue,
+  filterVariablesForDefinitions,
+  formatVariableValueForText,
+  mergeVariableOptions,
+  normalizeVariableMap,
+  normalizeWidgetConfig,
+  parseVariableValueFromText,
+  resolveWidgetVariables,
+  stringifyVariableOptionValue,
+} from "@/lib/variables";
 import {
   type DashboardSummary,
   type DashboardWidget,
+  type DashboardWidgetConfig,
   type WidgetPosition,
 } from "@/types/dashboard";
-import { type ChartType, type Query, type QueryRow } from "@/types/query";
-import { LayoutDashboard, LoaderCircle } from "lucide-react";
+import {
+  type ChartType,
+  type Query,
+  type QueryRow,
+  type QueryVariableDefinition,
+  type QueryVariableMap,
+  type QueryVariableOption,
+} from "@/types/query";
+import { ChevronDown, LayoutDashboard, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 
 type BackendWidget = {
+  config?: DashboardWidgetConfig | Record<string, unknown>;
   id: string;
   widget_type: ChartType;
   position: WidgetPosition;
@@ -67,6 +112,27 @@ type ChartsMeta = {
 type WidgetMeta = {
   queryId: string;
   chartType: ChartType;
+  config?: DashboardWidgetConfig;
+  variableDefinitions?: QueryVariableDefinition[];
+};
+
+type DashboardFilterDefinition = QueryVariableDefinition & {
+  options?: QueryVariableOption[];
+};
+
+type WidgetScopedVariableDefinition = QueryVariableDefinition & {
+  dashboardKey: string;
+  options?: QueryVariableOption[];
+  queryKey: string;
+  widgetId: string;
+};
+
+type WidgetSettingsState = {
+  widgetId: string;
+  queryId: string;
+  queryName: string;
+  variableDefinitions: QueryVariableDefinition[];
+  config: DashboardWidgetConfig;
 };
 
 type ChartTypeGuide = {
@@ -82,10 +148,6 @@ type QueryPreview = {
   data: QueryRow[];
   schema?: string[];
 };
-
-type QueryExecutionResult =
-  | { status: "fulfilled"; query: Query }
-  | { status: "rejected"; error: Error };
 
 type QueryShapeSummary = {
   fieldCount: number;
@@ -105,6 +167,93 @@ type ChartPreviewSummary = {
   sampleItems: string[];
 };
 
+const TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+const DEFAULT_TABLE_PAGE_SIZE = 25;
+
+const getWidgetTablePageSize = (config?: DashboardWidgetConfig) => {
+  const parsedValue = Number(config?.table_page_size);
+
+  return TABLE_PAGE_SIZE_OPTIONS.includes(
+    parsedValue as (typeof TABLE_PAGE_SIZE_OPTIONS)[number],
+  )
+    ? parsedValue
+    : DEFAULT_TABLE_PAGE_SIZE;
+};
+
+function WidgetHeaderControls({
+  widgetId,
+  type,
+  tablePageSize,
+  onTablePageSizeChange,
+}: {
+  widgetId: string;
+  type: ChartType;
+  tablePageSize: number;
+  onTablePageSizeChange: (widgetId: string, pageSize: number) => void;
+}) {
+  return (
+    <div className="relative z-30 flex items-center gap-2">
+      {type === "table" ? (
+        <Select
+          value={String(tablePageSize)}
+          onValueChange={(value) =>
+            onTablePageSizeChange(widgetId, Number(value))
+          }
+        >
+          <SelectTrigger
+            size="sm"
+            className="h-8 border-white/15 bg-slate-950/80 px-1.5 text-xs text-slate-100 hover:bg-slate-900 [&_svg]:text-slate-300"
+            aria-label="Table size"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="border-white/10 bg-slate-900 text-slate-100">
+            {TABLE_PAGE_SIZE_OPTIONS.map((size) => (
+              <SelectItem
+                key={size}
+                value={String(size)}
+                className="text-xs text-slate-100 focus:bg-white/10 focus:text-slate-100"
+              >
+                {size} rows
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
+      <button
+        className="widget-menu-toggle flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-white/15 text-slate-200 transition hover:bg-white/10"
+        type="button"
+        aria-label="Widget actions"
+        data-widget-id={widgetId}
+      >
+        ...
+      </button>
+      <div className="widget-menu absolute right-10 top-10 z-40 hidden min-w-36 overflow-hidden rounded-lg border border-white/10 bg-slate-900/95 shadow-lg">
+        <button
+          className="widget-settings block w-full cursor-pointer px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10"
+          type="button"
+          data-widget-id={widgetId}
+        >
+          Filters
+        </button>
+        <button
+          className="export-widget block w-full cursor-pointer px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10"
+          type="button"
+          data-widget-id={widgetId}
+        >
+          Export CSV
+        </button>
+      </div>
+      <button
+        className="delete-widget h-8 w-8 cursor-pointer rounded-md border border-red-400/40 text-sm text-red-300 transition hover:bg-red-500/10 hover:text-red-200"
+        type="button"
+      >
+        X
+      </button>
+    </div>
+  );
+}
+
 const formatCompactNumber = (value: unknown): string => {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return String(value ?? "");
@@ -114,6 +263,8 @@ const formatCompactNumber = (value: unknown): string => {
     maximumFractionDigits: 2,
   }).format(numericValue);
 };
+
+const NUMERIC_TABLE_VALUE_PATTERN = /^-?\d+(?:\.\d+)?$/;
 
 const toNumeric = (value: unknown): number | null => {
   if (value === null || value === undefined) return null;
@@ -133,6 +284,23 @@ const formatTableValue = (value: unknown): string => {
       maximumFractionDigits: 2,
     }).format(value);
   }
+  if (typeof value === "bigint") {
+    return value.toLocaleString("en-US");
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!NUMERIC_TABLE_VALUE_PATTERN.test(trimmed)) return value;
+
+    const isNegative = trimmed.startsWith("-");
+    const unsignedValue = isNegative ? trimmed.slice(1) : trimmed;
+    const [integerPart, fractionPart] = unsignedValue.split(".");
+    const formattedInteger = Number(integerPart).toLocaleString("en-US");
+    const withSign = isNegative ? `-${formattedInteger}` : formattedInteger;
+
+    return fractionPart !== undefined
+      ? `${withSign}.${fractionPart}`
+      : withSign;
+  }
 
   return String(value);
 };
@@ -144,6 +312,293 @@ const formatDashboardLabel = (dashboard: DashboardSummary) => {
 
   return dashboard.name;
 };
+
+const enrichVariableDefinitions = (
+  definitions: QueryVariableDefinition[] = [],
+  filterData: Record<string, QueryVariableOption[]> = {},
+) =>
+  definitions.map((definition) => ({
+    ...definition,
+    options: mergeVariableOptions(
+      definition.options,
+      filterData[definition.key],
+    ),
+  }));
+
+const mergeDashboardFilterDefinitions = (
+  current: Record<string, DashboardFilterDefinition>,
+  definitions: QueryVariableDefinition[] = [],
+) => {
+  const next = { ...current };
+  definitions.forEach((definition) => {
+    const existing = next[definition.key];
+
+    next[definition.key] = {
+      ...definition,
+      key: definition.key,
+      options: mergeVariableOptions(existing?.options, definition.options),
+    };
+  });
+
+  return next;
+};
+
+const hasVariableValue = (value: QueryVariableMap[string] | undefined) => {
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  return value !== undefined && value !== null && String(value).trim() !== "";
+};
+
+const getMissingRequiredVariables = (
+  definitions: QueryVariableDefinition[],
+  values: QueryVariableMap,
+) =>
+  definitions.filter(
+    (definition) =>
+      definition.required && !hasVariableValue(values[definition.key]),
+  );
+
+const getWidgetScopedVariableDefinitions = (
+  widgetId: string,
+  definitions: QueryVariableDefinition[] = [],
+): WidgetScopedVariableDefinition[] => {
+  return definitions.map((definition) => ({
+    ...definition,
+    dashboardKey: definition.key,
+    key: definition.key,
+    options: mergeVariableOptions(definition.options),
+    queryKey: definition.key,
+    widgetId,
+  }));
+};
+
+function MultiVariableCombobox({
+  disabled = false,
+  options,
+  selectedValues,
+  onChange,
+}: {
+  disabled?: boolean;
+  options: QueryVariableOption[];
+  selectedValues: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const selectedOptions = options.filter((option) =>
+    selectedValues.includes(stringifyVariableOptionValue(option.value)),
+  );
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const filteredOptions = useMemo(
+    () =>
+      options.filter((option) =>
+        option.label.toLowerCase().includes(search.trim().toLowerCase()),
+      ),
+    [options, search],
+  );
+  const allSelected =
+    options.length > 0 && selectedValues.length === options.length;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          className="mt-3 flex min-h-11 w-full items-center justify-between gap-3 rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-left text-sm text-slate-100"
+        >
+          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+            {selectedOptions.length ? (
+              selectedOptions.map((option) => (
+                <span
+                  key={`${option.label}-${option.value}`}
+                  className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                >
+                  {option.label}
+                </span>
+              ))
+            ) : (
+              <span className="text-slate-400">Select values</span>
+            )}
+          </div>
+          <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-(--radix-popover-trigger-width) border-white/10 bg-slate-950/95 p-2 text-slate-100"
+      >
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={search}
+            disabled={disabled}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search values"
+            className="w-full rounded-md border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-400"
+          />
+          <button
+            type="button"
+            disabled={disabled}
+            className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm text-slate-100 hover:bg-slate-800"
+            onClick={() =>
+              onChange(
+                allSelected
+                  ? []
+                  : options.map((option) =>
+                      stringifyVariableOptionValue(option.value),
+                    ),
+              )
+            }
+          >
+            <Checkbox checked={allSelected} className="pointer-events-none" />
+            <span>{allSelected ? "Deselect all" : "Select all"}</span>
+          </button>
+          <div className="max-h-64 space-y-1 overflow-y-auto">
+            {filteredOptions.length ? (
+              filteredOptions.map((option) => {
+                const optionValue = stringifyVariableOptionValue(option.value);
+                const checked = selectedValues.includes(optionValue);
+
+                return (
+                  <button
+                    key={`${option.label}-${option.value}`}
+                    type="button"
+                    disabled={disabled}
+                    className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm text-slate-100 hover:bg-slate-800"
+                    onClick={() =>
+                      onChange(
+                        checked
+                          ? selectedValues.filter(
+                              (value) => value !== optionValue,
+                            )
+                          : [...selectedValues, optionValue],
+                      )
+                    }
+                  >
+                    <Checkbox
+                      checked={checked}
+                      className="pointer-events-none"
+                    />
+                    <span>{option.label}</span>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="px-2 py-3 text-sm text-slate-400">
+                No options found.
+              </div>
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function VariableValueInput({
+  className,
+  disabled = false,
+  definition,
+  placeholder,
+  value,
+  onChange,
+}: {
+  className?: string;
+  disabled?: boolean;
+  definition: Pick<
+    QueryVariableDefinition,
+    "key" | "label" | "type" | "multiple" | "options"
+  >;
+  placeholder?: string;
+  value: QueryVariableMap[string];
+  onChange: (value: QueryVariableMap[string]) => void;
+}) {
+  const options = definition.options ?? [];
+
+  if (options.length) {
+    if (definition.multiple) {
+      return (
+        <MultiVariableCombobox
+          disabled={disabled}
+          options={options}
+          selectedValues={
+            Array.isArray(value) ? value.map(stringifyVariableOptionValue) : []
+          }
+          onChange={(nextValues) =>
+            onChange(
+              nextValues.map((item) => coercePrimitiveValue(item, definition)),
+            )
+          }
+        />
+      );
+    }
+
+    return (
+      <Select
+        disabled={disabled}
+        value={stringifyVariableOptionValue(
+          Array.isArray(value) ? (value[0] ?? null) : (value ?? null),
+        )}
+        onValueChange={(nextValue) =>
+          onChange(
+            nextValue && nextValue !== "__all__"
+              ? coercePrimitiveValue(nextValue, definition)
+              : null,
+          )
+        }
+      >
+        <SelectTrigger className={className}>
+          <SelectValue placeholder={placeholder ?? "Select value"} />
+        </SelectTrigger>
+        <SelectContent className="border-white/10 bg-slate-950/95 text-slate-100">
+          <SelectItem value="__all__">All</SelectItem>
+          {options.map((option) => (
+            <SelectItem
+              key={`${definition.key}-${option.label}-${option.value}`}
+              value={stringifyVariableOptionValue(option.value)}
+            >
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  }
+
+  if (
+    !definition.multiple &&
+    (definition.type === "date" || definition.type === "datetime")
+  ) {
+    return (
+      <VariableDatePicker
+        definition={definition}
+        disabled={disabled}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className={className}
+      />
+    );
+  }
+
+  return (
+    <input
+      type="text"
+      disabled={disabled}
+      value={formatVariableValueForText(value)}
+      onChange={(event) =>
+        onChange(parseVariableValueFromText(event.target.value, definition))
+      }
+      placeholder={
+        placeholder ??
+        (definition.multiple ? "Comma-separated values" : "Enter value")
+      }
+      className={className}
+    />
+  );
+}
 
 const normalizeRoleName = (roleName?: string | null) =>
   roleName?.trim().toUpperCase() ?? "";
@@ -217,17 +672,19 @@ async function mapWithConcurrency<T, R>(
 function TableWidgetView({
   data,
   schema,
+  tablePageSize = DEFAULT_TABLE_PAGE_SIZE,
 }: {
   data: QueryRow[];
   schema?: string[];
+  tablePageSize?: number;
 }) {
   return (
     <DataTable
       data={data}
       columns={getColumns(data, schema)}
       formatValue={formatTableValue}
-      pageSize={25}
-      paginationThreshold={25}
+      pageSize={tablePageSize}
+      paginationThreshold={tablePageSize}
       emptyMessage={
         <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-300">
           No data available.
@@ -1157,6 +1614,13 @@ export default function PopulationDashboard() {
   const chartsRef = useRef<Record<string, ChartsMeta>>({});
   const widgetsMetaRef = useRef<Record<string, WidgetMeta>>({});
   const widgetsRef = useRef<DashboardWidget[]>([]);
+  const queriesRef = useRef<Query[]>([]);
+  const dashboardVariablesRef = useRef<QueryVariableMap>({});
+  const globalFilterKeySetRef = useRef<Set<string>>(new Set());
+  const headerControlsRootsRef = useRef<Record<string, Root>>({});
+  const widgetTableSizeChangeRef = useRef<
+    (widgetId: string, pageSize: number) => void
+  >(() => undefined);
   const dashboardLoadRequestRef = useRef(0);
   const dashboardLoadAbortRef = useRef<AbortController | null>(null);
 
@@ -1170,6 +1634,13 @@ export default function PopulationDashboard() {
 
   const [dashboardName, setDashboardName] = useState("My Dashboard");
   const [dashboardDescription, setDashboardDescription] = useState("");
+  const [dashboardVariables, setDashboardVariables] =
+    useState<QueryVariableMap>({});
+  const [persistedDashboardVariables, setPersistedDashboardVariables] =
+    useState<QueryVariableMap>({});
+  const [dashboardFilterDefinitions, setDashboardFilterDefinitions] = useState<
+    Record<string, DashboardFilterDefinition>
+  >({});
   const [editingDashboardMeta, setEditingDashboardMeta] = useState(false);
   const [dashboardNameDraft, setDashboardNameDraft] = useState("My Dashboard");
   const [dashboardDescriptionDraft, setDashboardDescriptionDraft] =
@@ -1194,6 +1665,8 @@ export default function PopulationDashboard() {
   const [selectedQueryPreview, setSelectedQueryPreview] =
     useState<QueryPreview | null>(null);
   const [loadingQueryPreview, setLoadingQueryPreview] = useState(false);
+  const [widgetSettings, setWidgetSettings] =
+    useState<WidgetSettingsState | null>(null);
 
   const navigate = useNavigate();
   const selectedDashboardOption = useMemo(
@@ -1302,10 +1775,134 @@ export default function PopulationDashboard() {
       ),
     [chartTypeOptions, selectedQueryShape],
   );
+  const dynamicFilterTopology = useMemo(() => {
+    const widgetCandidates = widgets.flatMap((widget) => {
+      if (!widget.queryId) {
+        return [];
+      }
 
+      const meta = widgetsMetaRef.current[widget.id];
+
+      return getWidgetScopedVariableDefinitions(
+        widget.id,
+        meta?.variableDefinitions ?? [],
+      );
+    });
+
+    const usage = widgetCandidates.reduce<
+      Record<
+        string,
+        {
+          definitions: WidgetScopedVariableDefinition[];
+          widgetIds: Set<string>;
+        }
+      >
+    >((acc, definition) => {
+      const groupKey = `${definition.dashboardKey}::${definition.label}`;
+      const current = acc[groupKey] ?? {
+        definitions: [],
+        widgetIds: new Set<string>(),
+      };
+
+      current.definitions.push(definition);
+      current.widgetIds.add(definition.widgetId);
+      acc[groupKey] = current;
+      return acc;
+    }, {});
+
+    const globalDefinitions = Object.values(usage).reduce<
+      Record<string, DashboardFilterDefinition>
+    >((acc, entry) => {
+      if (entry.widgetIds.size < 2) {
+        return acc;
+      }
+
+      const [firstDefinition] = entry.definitions;
+      const existing = acc[firstDefinition.dashboardKey];
+      const mergedFromState =
+        dashboardFilterDefinitions[firstDefinition.dashboardKey];
+
+      acc[firstDefinition.dashboardKey] = {
+        ...(existing ?? mergedFromState ?? firstDefinition),
+        key: firstDefinition.dashboardKey,
+        label:
+          existing?.label ?? mergedFromState?.label ?? firstDefinition.label,
+        type: existing?.type ?? mergedFromState?.type ?? firstDefinition.type,
+        multiple:
+          existing?.multiple ??
+          mergedFromState?.multiple ??
+          firstDefinition.multiple,
+        options: mergeVariableOptions(
+          existing?.options,
+          mergedFromState?.options,
+          ...entry.definitions.map((item) => item.options),
+        ),
+      };
+
+      return acc;
+    }, {});
+
+    const widgetDefinitions = widgetCandidates.reduce<
+      Record<string, WidgetScopedVariableDefinition[]>
+    >((acc, definition) => {
+      const groupKey = `${definition.dashboardKey}::${definition.label}`;
+      const entry = usage[groupKey];
+
+      if (entry.widgetIds.size >= 2) {
+        return acc;
+      }
+
+      acc[definition.widgetId] = [
+        ...(acc[definition.widgetId] ?? []),
+        definition,
+      ];
+      return acc;
+    }, {});
+
+    return {
+      globalDefinitions: Object.values(globalDefinitions),
+      hasAnyVariables: widgetCandidates.length > 0,
+      widgetDefinitions,
+    };
+  }, [dashboardFilterDefinitions, widgets]);
+  const globalFilterKeySet = useMemo(
+    () =>
+      new Set(
+        dynamicFilterTopology.globalDefinitions.map(
+          (definition) => definition.key,
+        ),
+      ),
+    [dynamicFilterTopology.globalDefinitions],
+  );
+  const persistableDashboardVariables = useMemo(
+    () =>
+      Object.entries(dashboardVariables).reduce<QueryVariableMap>(
+        (acc, [key, value]) => {
+          if (globalFilterKeySet.has(key)) {
+            acc[key] = value;
+          }
+
+          return acc;
+        },
+        {},
+      ),
+    [dashboardVariables, globalFilterKeySet],
+  );
   useEffect(() => {
     widgetsRef.current = widgets;
   }, [widgets]);
+
+  useEffect(() => {
+    queriesRef.current = queries;
+  }, [queries]);
+
+  useEffect(() => {
+    dashboardVariablesRef.current = dashboardVariables;
+  }, [dashboardVariables]);
+
+  useEffect(() => {
+    globalFilterKeySetRef.current = globalFilterKeySet;
+  }, [globalFilterKeySet]);
 
   useEffect(() => {
     setDashboardNameDraft(dashboardName);
@@ -1329,6 +1926,9 @@ export default function PopulationDashboard() {
       if (!dashboards.length) {
         clearSelectedDashboardId();
         setSelectedDashboardIdState("");
+        setDashboardVariables({});
+        setPersistedDashboardVariables({});
+        setDashboardFilterDefinitions({});
         setDashboardSelectorOpen(false);
         return dashboards;
       }
@@ -1426,10 +2026,12 @@ export default function PopulationDashboard() {
       await updateDashboard(selectedDashboardId, {
         name: nextName,
         description: nextDescription,
+        variables: persistableDashboardVariables,
       });
 
       setDashboardName(nextName);
       setDashboardDescription(nextDescription);
+      setPersistedDashboardVariables(persistableDashboardVariables);
       setEditingDashboardMeta(false);
 
       const dashboards = await loadDashboardOptions({
@@ -1457,6 +2059,7 @@ export default function PopulationDashboard() {
     dashboardDescriptionDraft,
     dashboardNameDraft,
     loadDashboardOptions,
+    persistableDashboardVariables,
     selectedDashboardId,
   ]);
 
@@ -1600,12 +2203,14 @@ export default function PopulationDashboard() {
 
   const destroyChart = useCallback((id: string) => {
     const meta = chartsRef.current[id];
-    if (!meta) return;
-    meta.observer?.disconnect?.();
-    meta.instance?.dispose?.();
-    meta.root?.unmount?.();
-    meta.statusRoot?.unmount?.();
+    meta?.observer?.disconnect?.();
+    meta?.instance?.dispose?.();
+    meta?.root?.unmount?.();
+    meta?.statusRoot?.unmount?.();
     delete chartsRef.current[id];
+
+    headerControlsRootsRef.current[id]?.unmount?.();
+    delete headerControlsRootsRef.current[id];
   }, []);
 
   const deleteWidget = useCallback(
@@ -1637,13 +2242,7 @@ export default function PopulationDashboard() {
         <div class="grid-stack-item-content overflow-hidden rounded-2xl border border-white/10 bg-slate-900/45 shadow-[0_20px_45px_rgba(2,6,23,0.45)] backdrop-blur-xl flex flex-col">
           <div class="px-4 py-3 border-b border-white/10 font-semibold text-slate-100 flex justify-between items-center gap-3">
             <span class="truncate" data-widget-title="${id}">${title}</span>
-            <div class="relative z-30 flex items-center gap-2">
-              <button class="widget-menu-toggle flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-white/15 text-slate-200 transition hover:bg-white/10" type="button" aria-label="Widget actions" data-widget-id="${id}">...</button>
-              <div class="widget-menu absolute right-0 top-10 z-40 hidden min-w-36 overflow-hidden rounded-lg border border-white/10 bg-slate-900/95 shadow-lg">
-                <button class="export-widget block w-full cursor-pointer px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/10" type="button" data-widget-id="${id}">Export CSV</button>
-              </div>
-              <button class="delete-widget h-8 w-8 cursor-pointer rounded-md border border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200 transition text-sm" type="button">X</button>
-            </div>
+            <div data-widget-header-controls="${id}"></div>
           </div>
           <div class="relative flex flex-1 min-h-0 flex-col">
             <div id="${id}" class="flex-1 min-h-50"></div>
@@ -1721,21 +2320,61 @@ export default function PopulationDashboard() {
     chartsRef.current[id]?.statusRoot?.render(null);
   }, []);
 
+  const renderWidgetHeaderControls = useCallback(
+    (id: string, type: ChartType, config?: DashboardWidgetConfig) => {
+      const mountEl = document.querySelector<HTMLElement>(
+        `[data-widget-header-controls="${id}"]`,
+      );
+
+      if (!mountEl) {
+        return;
+      }
+
+      const root = headerControlsRootsRef.current[id] ?? createRoot(mountEl);
+      headerControlsRootsRef.current[id] = root;
+
+      root.render(
+        <WidgetHeaderControls
+          widgetId={id}
+          type={type}
+          tablePageSize={getWidgetTablePageSize(config)}
+          onTablePageSizeChange={(widgetId, pageSize) =>
+            widgetTableSizeChangeRef.current(widgetId, pageSize)
+          }
+        />,
+      );
+    },
+    [],
+  );
+
   /**
    * Initialize chart instance
    * Chart now renders directly from API query.data
    */
   const initChart = useCallback(
-    (id: string, type: ChartType, data: QueryRow[] = [], schema?: string[]) => {
+    (
+      id: string,
+      type: ChartType,
+      data: QueryRow[] = [],
+      schema?: string[],
+      config?: DashboardWidgetConfig,
+    ) => {
       const el = document.getElementById(id);
       if (!el) return;
 
       destroyChart(id);
       setWidgetBodyMode(id, type);
+      renderWidgetHeaderControls(id, type, config);
 
       if (type === "table") {
         const root = createRoot(el);
-        root.render(<TableWidgetView data={data} schema={schema} />);
+        root.render(
+          <TableWidgetView
+            data={data}
+            schema={schema}
+            tablePageSize={getWidgetTablePageSize(config)}
+          />,
+        );
         chartsRef.current[id] = { type, root };
         return;
       }
@@ -1753,8 +2392,46 @@ export default function PopulationDashboard() {
         observer,
       };
     },
-    [destroyChart, setWidgetBodyMode],
+    [destroyChart, renderWidgetHeaderControls, setWidgetBodyMode],
   );
+
+  const handleWidgetTablePageSizeChange = useCallback(
+    (widgetId: string, pageSize: number) => {
+      const widget = widgetsRef.current.find((item) => item.id === widgetId);
+      if (!widget || widget.chartType !== "table") {
+        return;
+      }
+
+      const nextConfig = normalizeWidgetConfig({
+        ...(widgetsMetaRef.current[widgetId]?.config ?? widget.config ?? {}),
+        table_page_size: pageSize,
+      });
+
+      const existingMeta = widgetsMetaRef.current[widgetId];
+      if (existingMeta) {
+        widgetsMetaRef.current[widgetId] = {
+          ...existingMeta,
+          config: nextConfig,
+        };
+      }
+
+      setWidgets((prev) =>
+        prev.map((item) =>
+          item.id === widgetId ? { ...item, config: nextConfig } : item,
+        ),
+      );
+
+      initChart(
+        widgetId,
+        widget.chartType,
+        widget.data ?? [],
+        widget.schema,
+        nextConfig,
+      );
+    },
+    [initChart],
+  );
+  widgetTableSizeChangeRef.current = handleWidgetTablePageSizeChange;
 
   const setWidgetLoading = useCallback(
     (id: string, type: ChartType) => {
@@ -1806,6 +2483,30 @@ export default function PopulationDashboard() {
     [renderWidgetStatus, setWidgetBodyMode],
   );
 
+  const setWidgetNeedsVariables = useCallback(
+    (
+      id: string,
+      type: ChartType,
+      missingVariables: QueryVariableDefinition[],
+    ) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      setWidgetBodyMode(id, type);
+
+      renderWidgetStatus(
+        id,
+        <div className="rounded-xl border border-amber-300/30 bg-slate-950/88 px-4 py-3 text-center text-sm text-amber-100 shadow-lg">
+          <p className="font-medium">Widget needs filters before it can run</p>
+          <p className="mt-1 text-xs text-amber-100/80">
+            Missing: {missingVariables.map((item) => item.label).join(", ")}
+          </p>
+        </div>,
+        "bg-slate-950/76 backdrop-blur-[2px]",
+      );
+    },
+    [renderWidgetStatus, setWidgetBodyMode],
+  );
+
   const renderWidgetResult = useCallback(
     (id: string, type: ChartType, data: QueryRow[], schema?: string[]) => {
       const applyData = () => {
@@ -1818,7 +2519,7 @@ export default function PopulationDashboard() {
 
         if (type === "table") {
           clearWidgetStatus(id);
-          initChart(id, type, data, schema);
+          initChart(id, type, data, schema, widgetsMetaRef.current[id]?.config);
           return;
         }
 
@@ -1833,6 +2534,150 @@ export default function PopulationDashboard() {
     },
     [clearWidgetStatus, initChart],
   );
+
+  const updateWidgetConfig = useCallback(
+    (widgetId: string, config: DashboardWidgetConfig) => {
+      const normalizedConfig = normalizeWidgetConfig(config);
+      const existingMeta = widgetsMetaRef.current[widgetId];
+
+      if (existingMeta) {
+        widgetsMetaRef.current[widgetId] = {
+          ...existingMeta,
+          config: normalizedConfig,
+        };
+      }
+
+      setWidgets((prev) =>
+        prev.map((widget) =>
+          widget.id === widgetId
+            ? { ...widget, config: normalizedConfig }
+            : widget,
+        ),
+      );
+      renderWidgetHeaderControls(
+        widgetId,
+        existingMeta?.chartType ?? "table",
+        normalizedConfig,
+      );
+    },
+    [renderWidgetHeaderControls],
+  );
+
+  const loadWidgetVariableDefinitions = useCallback(async (queryId: string) => {
+    const filterMetadata = await fetchQueryFilters(queryId);
+
+    return enrichVariableDefinitions(
+      filterMetadata?.variables ?? [],
+      filterMetadata?.filter_data ?? {},
+    );
+  }, []);
+
+  const runWidgetQuery = useCallback(
+    async (
+      widgetId: string,
+      queryId: string,
+      chartType: ChartType,
+      dashboardVariableValues: QueryVariableMap = dashboardVariablesRef.current,
+      configOverride?: DashboardWidgetConfig,
+    ) => {
+      const meta = widgetsMetaRef.current[widgetId];
+      const normalizedInputConfig = normalizeWidgetConfig(
+        configOverride ?? meta?.config,
+      );
+      const effectiveConfig = configOverride
+        ? normalizedInputConfig
+        : normalizeWidgetConfig({
+            ...normalizedInputConfig,
+            variables: Object.entries(
+              normalizedInputConfig.variables ?? {},
+            ).reduce<QueryVariableMap>((acc, [key, value]) => {
+              if (!globalFilterKeySetRef.current.has(key)) {
+                acc[key] = value;
+              }
+
+              return acc;
+            }, {}),
+          });
+      let variableDefinitions = meta?.variableDefinitions ?? [];
+
+      try {
+        variableDefinitions = await loadWidgetVariableDefinitions(queryId);
+      } catch {
+        variableDefinitions = meta?.variableDefinitions ?? [];
+      }
+
+      const runtimeVariables = filterVariablesForDefinitions(
+        resolveWidgetVariables(dashboardVariableValues, effectiveConfig),
+        variableDefinitions,
+      );
+
+      setWidgetLoading(widgetId, chartType);
+      const result = await fetchQueryWithData(
+        queryId,
+        {},
+        {
+          dashboard_id: selectedDashboardId,
+          widget_id: widgetId,
+          variables: runtimeVariables,
+        },
+      );
+
+      const rows = result.data ?? [];
+      const schema = result.result_schema ?? [];
+
+      widgetsMetaRef.current[widgetId] = {
+        queryId,
+        chartType,
+        config: effectiveConfig,
+        variableDefinitions,
+      };
+
+      setDashboardFilterDefinitions((prev) =>
+        mergeDashboardFilterDefinitions(prev, variableDefinitions),
+      );
+      updateWidgetData(widgetId, rows, schema);
+      renderWidgetResult(widgetId, chartType, rows, schema);
+      updateWidgetTitle(widgetId, result.name || meta?.queryId || "Widget");
+    },
+    [
+      renderWidgetResult,
+      selectedDashboardId,
+      setWidgetLoading,
+      updateWidgetData,
+      updateWidgetTitle,
+    ],
+  );
+
+  const rerunDashboardWidgets = useCallback(async () => {
+    const activeWidgets = widgetsRef.current.filter((widget) => widget.queryId);
+    if (!activeWidgets.length) {
+      return;
+    }
+
+    const failures: string[] = [];
+
+    await mapWithConcurrency(
+      activeWidgets,
+      DASHBOARD_QUERY_CONCURRENCY,
+      async (widget) => {
+        try {
+          await runWidgetQuery(widget.id, widget.queryId, widget.chartType);
+        } catch (error) {
+          failures.push(widget.id);
+          setWidgetError(widget.id, widget.chartType);
+          throw error;
+        }
+      },
+    ).catch(() => undefined);
+
+    if (failures.length) {
+      toast.error(
+        `${failures.length} ${
+          failures.length === 1 ? "widget query" : "widget queries"
+        } failed to load.`,
+      );
+    }
+  }, [runWidgetQuery, setWidgetError]);
 
   const addWidget = useCallback(
     (opts: {
@@ -1868,6 +2713,124 @@ export default function PopulationDashboard() {
     [ensureWidgetDom],
   );
 
+  const openWidgetSettings = useCallback(
+    (widgetId: string) => {
+      const widget = widgetsRef.current.find((item) => item.id === widgetId);
+      if (!widget?.queryId) {
+        toast.error("Widget query not found.");
+        return;
+      }
+
+      const query =
+        queriesRef.current.find((item) => item.id === widget.queryId) ??
+        widget.query ??
+        null;
+      const meta = widgetsMetaRef.current[widgetId];
+      const baseConfig = normalizeWidgetConfig(meta?.config ?? widget.config);
+      const widgetConfig = normalizeWidgetConfig({
+        ...baseConfig,
+        variables: Object.entries(
+          baseConfig.variables ?? {},
+        ).reduce<QueryVariableMap>((acc, [key, value]) => {
+          if (!globalFilterKeySetRef.current.has(key)) {
+            acc[key] = value;
+          }
+
+          return acc;
+        }, {}),
+      });
+
+      const openSettings = (variableDefinitions: QueryVariableDefinition[]) =>
+        setWidgetSettings({
+          widgetId,
+          queryId: widget.queryId,
+          queryName: query?.name || widget.title,
+          variableDefinitions,
+          config: widgetConfig,
+        });
+
+      if (meta?.variableDefinitions?.length) {
+        openSettings(meta.variableDefinitions);
+        return;
+      }
+
+      void loadWidgetVariableDefinitions(widget.queryId)
+        .then((variableDefinitions) => {
+          widgetsMetaRef.current[widgetId] = {
+            ...(widgetsMetaRef.current[widgetId] ?? {
+              chartType: widget.chartType,
+              queryId: widget.queryId,
+            }),
+            config: widgetConfig,
+            variableDefinitions,
+          };
+
+          setDashboardFilterDefinitions((prev) =>
+            mergeDashboardFilterDefinitions(prev, variableDefinitions),
+          );
+          openSettings(variableDefinitions);
+        })
+        .catch(() => openSettings([]));
+    },
+    [loadWidgetVariableDefinitions],
+  );
+
+  const updateDashboardVariableValue = useCallback(
+    (
+      definition: QueryVariableDefinition,
+      value: QueryVariableMap[string],
+      keyOverride?: string,
+    ) => {
+      const targetKey = keyOverride || definition.key;
+      setDashboardVariables((prev) => ({
+        ...prev,
+        [targetKey]: value,
+      }));
+    },
+    [],
+  );
+
+  const updateWidgetSettingsConfig = useCallback(
+    (updater: (config: DashboardWidgetConfig) => DashboardWidgetConfig) => {
+      setWidgetSettings((prev) =>
+        prev
+          ? {
+              ...prev,
+              config: normalizeWidgetConfig(updater(prev.config)),
+            }
+          : prev,
+      );
+    },
+    [],
+  );
+
+  const applyWidgetSettings = useCallback(async () => {
+    if (!widgetSettings) {
+      return;
+    }
+
+    const normalizedConfig = normalizeWidgetConfig(widgetSettings.config);
+    updateWidgetConfig(widgetSettings.widgetId, normalizedConfig);
+
+    try {
+      await runWidgetQuery(
+        widgetSettings.widgetId,
+        widgetSettings.queryId,
+        widgetsMetaRef.current[widgetSettings.widgetId]?.chartType || "table",
+        dashboardVariablesRef.current,
+        normalizedConfig,
+      );
+      setWidgetSettings(null);
+      toast.success("Widget filters updated.");
+    } catch (error) {
+      setWidgetError(
+        widgetSettings.widgetId,
+        widgetsMetaRef.current[widgetSettings.widgetId]?.chartType || "table",
+      );
+      toast.error("Failed to update widget filters.");
+    }
+  }, [runWidgetQuery, setWidgetError, updateWidgetConfig, widgetSettings]);
+
   useEffect(() => {
     if (!showModal) return;
 
@@ -1902,6 +2865,24 @@ export default function PopulationDashboard() {
     void (async () => {
       try {
         setLoadingQueryPreview(true);
+        const selectedQuery =
+          availableQueries.find((query) => query.id === selectedQueryId) ??
+          null;
+
+        if (
+          selectedQuery &&
+          (selectedQuery.variable_definitions?.length ||
+            selectedQuery.variables?.length)
+        ) {
+          if (cancelled) return;
+
+          setSelectedQueryPreview({
+            data: [],
+            schema: selectedQuery.result_schema ?? [],
+          });
+          return;
+        }
+
         const result = await fetchQueryWithData(selectedQueryId);
 
         if (cancelled) return;
@@ -1927,7 +2908,7 @@ export default function PopulationDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [showModal, selectedQueryId]);
+  }, [availableQueries, selectedQueryId, showModal]);
 
   const confirmAddChart = useCallback(async () => {
     if (isViewer) {
@@ -1939,15 +2920,24 @@ export default function PopulationDashboard() {
 
     const id = uuidv7();
     const type = selectedChartType;
+    const selectedQuery = queries.find((q) => q.id === selectedQueryId);
+
+    if (!selectedQuery) return;
+    let variableDefinitions: QueryVariableDefinition[] = [];
+
+    try {
+      variableDefinitions =
+        await loadWidgetVariableDefinitions(selectedQueryId);
+    } catch {
+      variableDefinitions = [];
+    }
 
     widgetsMetaRef.current[id] = {
       queryId: selectedQueryId,
       chartType: type,
+      config: {},
+      variableDefinitions,
     };
-
-    const selectedQuery = queries.find((q) => q.id === selectedQueryId);
-
-    if (!selectedQuery) return;
 
     const bottomY = getBottomY();
 
@@ -1970,6 +2960,8 @@ export default function PopulationDashboard() {
         position: { x: 0, y: bottomY, w: 6, h: 3 },
         data: [],
         schema: [],
+        config: {},
+        query: selectedQuery,
       },
     ]);
 
@@ -1982,20 +2974,49 @@ export default function PopulationDashboard() {
         return;
       }
 
-      initChart(id, type, []);
-      setWidgetLoading(id, type);
+      initChart(id, type, [], undefined, widgetsMetaRef.current[id]?.config);
+      const resolvedVariables = resolveWidgetVariables(
+        dashboardVariablesRef.current,
+        {},
+      );
+      const missingRequiredVariables = getMissingRequiredVariables(
+        variableDefinitions,
+        resolvedVariables,
+      );
+
+      if (missingRequiredVariables.length) {
+        setWidgetNeedsVariables(id, type, missingRequiredVariables);
+      } else {
+        setWidgetLoading(id, type);
+      }
       resizeAllCharts();
     };
 
     requestAnimationFrame(waitForDom);
 
     try {
-      const result = await fetchQueryWithData(selectedQueryId);
+      const resolvedVariables = resolveWidgetVariables(
+        dashboardVariablesRef.current,
+        {},
+      );
+      const missingRequiredVariables = getMissingRequiredVariables(
+        variableDefinitions,
+        resolvedVariables,
+      );
 
-      const rows = result.data ?? [];
-      const schema = result.result_schema ?? [];
-      updateWidgetData(id, rows, schema);
-      renderWidgetResult(id, type, rows, schema);
+      if (missingRequiredVariables.length) {
+        setWidgetSettings({
+          widgetId: id,
+          queryId: selectedQueryId,
+          queryName: selectedQuery.name,
+          variableDefinitions,
+          config: {},
+        });
+        toast.message("Chart added. Configure its filters to load data.");
+        return;
+      }
+
+      await runWidgetQuery(id, selectedQueryId, type);
     } catch (err) {
       toast.error("Query failed: " + (err as Error).message);
 
@@ -2008,12 +3029,14 @@ export default function PopulationDashboard() {
     isViewer,
     renderWidgetResult,
     resizeAllCharts,
+    runWidgetQuery,
     setWidgetError,
     setWidgetLoading,
+    setWidgetNeedsVariables,
+    loadWidgetVariableDefinitions,
     selectedChartType,
     selectedQueryId,
     queries,
-    updateWidgetData,
   ]);
 
   const saveDashboard = useCallback(async () => {
@@ -2036,6 +3059,7 @@ export default function PopulationDashboard() {
           id: item.id,
           type: meta?.chartType,
           query_id: meta?.queryId,
+          config: meta?.config ?? {},
           position: {
             x: item.x!,
             y: item.y!,
@@ -2061,6 +3085,13 @@ export default function PopulationDashboard() {
         throw new Error("Failed to save dashboard");
       }
 
+      await updateDashboard(selectedDashboardId, {
+        name: dashboardName.trim(),
+        description: dashboardDescription.trim(),
+        variables: persistableDashboardVariables,
+      });
+      setPersistedDashboardVariables(persistableDashboardVariables);
+
       toast.success("Dashboard saved successfully.");
     } catch (err) {
       console.error("Failed to save dashboard:", err);
@@ -2069,7 +3100,13 @@ export default function PopulationDashboard() {
     } finally {
       setSaving(false);
     }
-  }, [isViewer, selectedDashboardId]);
+  }, [
+    dashboardDescription,
+    dashboardName,
+    isViewer,
+    persistableDashboardVariables,
+    selectedDashboardId,
+  ]);
 
   /**
    * Load dashboard configuration + query results from API
@@ -2102,9 +3139,14 @@ export default function PopulationDashboard() {
           throw new Error("Dashboard response missing data");
         }
 
+        const nextDashboardVariables = normalizeVariableMap(
+          result.data?.variables,
+        );
         setDashboardName(result.data?.name || "My Dashboard");
         setDashboardDescription(result.data?.description || "");
-
+        setDashboardVariables(nextDashboardVariables);
+        setPersistedDashboardVariables(nextDashboardVariables);
+        setDashboardFilterDefinitions({});
         const list: BackendWidget[] = widgetsResult?.data ?? [];
 
         // 1. Destroy all charts first
@@ -2137,17 +3179,58 @@ export default function PopulationDashboard() {
           return;
         }
 
+        const widgetQueryIds = Array.from(
+          new Set(list.map((widget) => widget.query_id).filter(Boolean)),
+        ) as string[];
+        const missingQueryIds = widgetQueryIds.filter(
+          (queryId) =>
+            !queriesRef.current.some((query) => query.id === queryId),
+        );
+
+        if (missingQueryIds.length) {
+          const loadedQueries = await fetchSavedQueries(
+            currentUser?.role?.name,
+          );
+
+          if (abortController.signal.aborted || isStaleRequest()) {
+            return;
+          }
+
+          setQueries(loadedQueries);
+        }
+
         const loadedWidgets: DashboardWidget[] = [];
+        let nextFilterDefinitions: Record<string, DashboardFilterDefinition> =
+          {};
 
         for (const w of list) {
           const id = w.id;
           const type = w.widget_type;
           const title = `${type.toUpperCase()} CHART`;
+          const normalizedConfig = normalizeWidgetConfig(w.config);
+          let variableDefinitions: QueryVariableDefinition[] = [];
+
+          if (w.query_id) {
+            try {
+              variableDefinitions = await loadWidgetVariableDefinitions(
+                w.query_id,
+              );
+            } catch {
+              variableDefinitions = [];
+            }
+          }
 
           widgetsMetaRef.current[id] = {
             queryId: w.query_id ?? "",
             chartType: type,
+            config: normalizedConfig,
+            variableDefinitions,
           };
+
+          nextFilterDefinitions = mergeDashboardFilterDefinitions(
+            nextFilterDefinitions,
+            variableDefinitions,
+          );
 
           addWidget({
             id,
@@ -2166,17 +3249,43 @@ export default function PopulationDashboard() {
             position: w.position,
             data: [],
             schema: [],
+            config: normalizedConfig,
           });
         }
 
+        setDashboardFilterDefinitions(nextFilterDefinitions);
         setWidgets(loadedWidgets);
 
         requestAnimationFrame(() => {
           for (const widget of loadedWidgets) {
-            initChart(widget.id, widget.chartType, []);
+            initChart(
+              widget.id,
+              widget.chartType,
+              [],
+              undefined,
+              widget.config,
+            );
 
             if (widget.queryId) {
-              setWidgetLoading(widget.id, widget.chartType);
+              const meta = widgetsMetaRef.current[widget.id];
+              const resolvedVariables = resolveWidgetVariables(
+                nextDashboardVariables,
+                meta?.config,
+              );
+              const missingRequiredVariables = getMissingRequiredVariables(
+                meta?.variableDefinitions ?? [],
+                resolvedVariables,
+              );
+
+              if (missingRequiredVariables.length) {
+                setWidgetNeedsVariables(
+                  widget.id,
+                  widget.chartType,
+                  missingRequiredVariables,
+                );
+              } else {
+                setWidgetLoading(widget.id, widget.chartType);
+              }
               continue;
             }
 
@@ -2190,96 +3299,41 @@ export default function PopulationDashboard() {
           setLoadingDashboardStructure(false);
         }
 
-        const widgetIdsByQueryId = new Map<string, string[]>();
-
-        for (const widget of loadedWidgets) {
-          if (!widget.queryId) {
-            continue;
-          }
-
-          const widgetIds = widgetIdsByQueryId.get(widget.queryId) ?? [];
-          widgetIds.push(widget.id);
-          widgetIdsByQueryId.set(widget.queryId, widgetIds);
-        }
-
-        const uniqueQueryIds = Array.from(widgetIdsByQueryId.keys());
-        const queryResultCache = new Map<string, QueryExecutionResult>();
         const failedQueryIds: string[] = [];
 
         await mapWithConcurrency(
-          uniqueQueryIds,
+          loadedWidgets.filter((widget) => widget.queryId),
           DASHBOARD_QUERY_CONCURRENCY,
-          async (queryId) => {
-            let execution = queryResultCache.get(queryId);
+          async (widget) => {
+            try {
+              const meta = widgetsMetaRef.current[widget.id];
+              const resolvedVariables = resolveWidgetVariables(
+                nextDashboardVariables,
+                meta?.config,
+              );
+              const missingRequiredVariables = getMissingRequiredVariables(
+                meta?.variableDefinitions ?? [],
+                resolvedVariables,
+              );
 
-            if (!execution) {
-              try {
-                const query = await fetchQueryWithData(queryId, {
-                  signal: abortController.signal,
-                });
-                execution = {
-                  status: "fulfilled",
-                  query,
-                };
-              } catch (error) {
-                if (isAbortError(error)) {
-                  throw error;
-                }
-
-                execution = {
-                  status: "rejected",
-                  error:
-                    error instanceof Error
-                      ? error
-                      : new Error("Query execution failed"),
-                };
-              }
-
-              queryResultCache.set(queryId, execution);
-            }
-
-            if (abortController.signal.aborted || isStaleRequest()) {
-              return execution;
-            }
-
-            const targetWidgetIds = widgetIdsByQueryId.get(queryId) ?? [];
-
-            if (execution.status === "fulfilled") {
-              const rows = execution.query.data ?? [];
-              const schema = execution.query.result_schema ?? [];
-              const title = execution.query.name;
-
-              targetWidgetIds.forEach((widgetId) => {
-                const meta = widgetsMetaRef.current[widgetId];
-
-                if (!meta) {
-                  return;
-                }
-
-                if (title) {
-                  updateWidgetTitle(widgetId, title);
-                }
-
-                updateWidgetData(widgetId, rows, schema);
-                renderWidgetResult(widgetId, meta.chartType, rows, schema);
-              });
-
-              return execution;
-            }
-
-            failedQueryIds.push(queryId);
-
-            targetWidgetIds.forEach((widgetId) => {
-              const meta = widgetsMetaRef.current[widgetId];
-
-              if (!meta) {
+              if (missingRequiredVariables.length) {
                 return;
               }
 
-              setWidgetError(widgetId, meta.chartType);
-            });
+              await runWidgetQuery(
+                widget.id,
+                widget.queryId,
+                widget.chartType,
+                nextDashboardVariables,
+              );
+            } catch (error) {
+              if (isAbortError(error)) {
+                throw error;
+              }
 
-            return execution;
+              failedQueryIds.push(widget.queryId);
+              setWidgetError(widget.id, widget.chartType);
+            }
           },
         );
 
@@ -2312,12 +3366,10 @@ export default function PopulationDashboard() {
       addWidget,
       destroyChart,
       initChart,
-      renderWidgetResult,
       resizeAllCharts,
+      runWidgetQuery,
       setWidgetError,
       setWidgetLoading,
-      updateWidgetData,
-      updateWidgetTitle,
     ],
   );
 
@@ -2367,6 +3419,17 @@ export default function PopulationDashboard() {
         return;
       }
 
+      if (target.classList.contains("widget-settings")) {
+        const widgetId = target.getAttribute("data-widget-id");
+        container
+          .querySelectorAll(".widget-menu")
+          .forEach((menuEl) => menuEl.classList.add("hidden"));
+        if (widgetId) {
+          openWidgetSettings(widgetId);
+        }
+        return;
+      }
+
       container
         .querySelectorAll(".widget-menu")
         .forEach((menuEl) => menuEl.classList.add("hidden"));
@@ -2402,7 +3465,13 @@ export default function PopulationDashboard() {
       gridRef.current?.destroy(false);
       gridRef.current = null;
     };
-  }, [deleteWidget, destroyChart, exportWidgetCsv, resizeAllCharts]);
+  }, [
+    deleteWidget,
+    destroyChart,
+    exportWidgetCsv,
+    openWidgetSettings,
+    resizeAllCharts,
+  ]);
 
   useEffect(() => {
     if (!selectedDashboardId || !gridContainerRef.current) {
@@ -2537,7 +3606,7 @@ export default function PopulationDashboard() {
             </div>
 
             <div className="mt-6 flex flex-wrap gap-3">
-              {canManageDashboardMeta ? (
+              {!isViewer && canManageDashboardMeta ? (
                 <Button
                   onClick={() => setShowCreateDashboardModal(true)}
                   variant="outline"
@@ -2547,30 +3616,28 @@ export default function PopulationDashboard() {
                 </Button>
               ) : null}
 
-              <Button
-                onClick={() => {
-                  if (isViewer) {
-                    toast.error("VIEWER cannot add charts.");
-                    return;
-                  }
+              {!isViewer ? (
+                <Button
+                  onClick={() => {
+                    setShowModal(true);
+                  }}
+                  variant="outline"
+                  className="rounded-xl border-emerald-400/30 bg-emerald-500/20 text-emerald-100 shadow-sm hover:bg-emerald-500/30 hover:text-emerald-100"
+                >
+                  + Add Chart
+                </Button>
+              ) : null}
 
-                  setShowModal(true);
-                }}
-                disabled={isViewer}
-                variant="outline"
-                className="rounded-xl border-emerald-400/30 bg-emerald-500/20 text-emerald-100 shadow-sm hover:bg-emerald-500/30 hover:text-emerald-100"
-              >
-                + Add Chart
-              </Button>
-
-              <Button
-                onClick={saveDashboard}
-                disabled={saving || isViewer}
-                variant="outline"
-                className="rounded-xl border-indigo-300/30 bg-indigo-500/25 text-indigo-50 hover:bg-indigo-500/35 hover:text-indigo-50 disabled:opacity-60"
-              >
-                {saving ? "Saving..." : "Save Dashboard"}
-              </Button>
+              {!isViewer ? (
+                <Button
+                  onClick={saveDashboard}
+                  disabled={saving}
+                  variant="outline"
+                  className="rounded-xl border-indigo-300/30 bg-indigo-500/25 text-indigo-50 hover:bg-indigo-500/35 hover:text-indigo-50 disabled:opacity-60"
+                >
+                  {saving ? "Saving..." : "Save Dashboard"}
+                </Button>
+              ) : null}
 
               <Button
                 onClick={() =>
@@ -2587,30 +3654,198 @@ export default function PopulationDashboard() {
                   : "Refresh Dashboard"}
               </Button>
 
-              <Button
-                variant="outline"
-                className="rounded-xl border-white/15 bg-slate-700/45 text-slate-100 hover:bg-slate-700/65 hover:text-slate-100"
-                onClick={() => {
-                  if (isViewer) {
-                    toast.error("VIEWER cannot open Query Builder.");
-                    return;
-                  }
+              {!isViewer ? (
+                <Button
+                  variant="outline"
+                  className="rounded-xl border-white/15 bg-slate-700/45 text-slate-100 hover:bg-slate-700/65 hover:text-slate-100"
+                  onClick={() => {
+                    navigate("/query-builder");
+                  }}
+                >
+                  Open Query Builder
+                </Button>
+              ) : null}
 
-                  navigate("/query-builder");
-                }}
-                disabled={isViewer}
-              >
-                Open Query Builder
-              </Button>
-
-              <Button
+              {/* <Button
                 asChild
                 variant="outline"
                 className="rounded-xl border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25 hover:text-cyan-100"
               >
                 <Link to="/graphql-playground">Open GraphQL Playground</Link>
-              </Button>
+              </Button> */}
             </div>
+
+            {selectedDashboardId &&
+            dynamicFilterTopology.globalDefinitions.length ? (
+              <div className="mt-6 rounded-2xl border border-white/10 bg-slate-950/35 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-100">
+                      Global Filters
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      className="rounded-lg border-white/15 bg-slate-800/60 text-slate-100 hover:bg-slate-700/70 hover:text-slate-100"
+                      onClick={() => {
+                        setDashboardVariables(persistedDashboardVariables);
+                      }}
+                    >
+                      Reset
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="rounded-lg border-cyan-300/30 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30 hover:text-cyan-100"
+                      onClick={() => void rerunDashboardWidgets()}
+                    >
+                      Apply Filters
+                    </Button>
+                  </div>
+                </div>
+
+                {dynamicFilterTopology.globalDefinitions.length ? (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {dynamicFilterTopology.globalDefinitions.map(
+                      (definition) => {
+                        const currentValue = dashboardVariables[definition.key];
+
+                        return (
+                          <div
+                            key={definition.key}
+                            className="rounded-xl border border-white/10 bg-slate-900/55 p-3"
+                          >
+                            <div className="mb-2 flex items-center gap-2">
+                              <span className="text-sm font-medium text-slate-100">
+                                {definition.label}
+                              </span>
+
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center text-slate-400 transition-colors hover:text-slate-200"
+                                    aria-label={`More info about ${definition.label}`}
+                                  >
+                                    <IoIosInformationCircleOutline className="h-4 w-4" />
+                                  </button>
+                                </TooltipTrigger>
+
+                                <TooltipContent
+                                  side="right"
+                                  className="flex items-center gap-2 rounded-md px-3 py-2 text-xs"
+                                >
+                                  <span className="text-slate-400">
+                                    Variable key:
+                                  </span>
+                                  <span className="font-mono uppercase tracking-[0.18em] text-slate-100 ">
+                                    {definition.key}
+                                  </span>
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+
+                            {(definition.options ?? []).length ? (
+                              definition.multiple ? (
+                                <MultiVariableCombobox
+                                  options={definition.options ?? []}
+                                  selectedValues={
+                                    Array.isArray(currentValue)
+                                      ? currentValue.map(
+                                          stringifyVariableOptionValue,
+                                        )
+                                      : []
+                                  }
+                                  onChange={(nextValues) =>
+                                    updateDashboardVariableValue(
+                                      definition,
+                                      nextValues.map((value) =>
+                                        coercePrimitiveValue(value, definition),
+                                      ),
+                                    )
+                                  }
+                                />
+                              ) : (
+                                <Select
+                                  value={stringifyVariableOptionValue(
+                                    Array.isArray(currentValue)
+                                      ? (currentValue[0] ?? null)
+                                      : (currentValue ?? null),
+                                  )}
+                                  onValueChange={(value) =>
+                                    updateDashboardVariableValue(
+                                      definition,
+                                      value && value !== "__all__"
+                                        ? coercePrimitiveValue(
+                                            value,
+                                            definition,
+                                          )
+                                        : null,
+                                    )
+                                  }
+                                >
+                                  <SelectTrigger className="mt-3 w-full border-white/10 bg-slate-950/60 text-slate-100">
+                                    <SelectValue placeholder="Select value" />
+                                  </SelectTrigger>
+                                  <SelectContent className="border-white/10 bg-slate-950/95 text-slate-100">
+                                    <SelectItem value="__all__">All</SelectItem>
+                                    {(definition.options ?? []).map(
+                                      (option) => (
+                                        <SelectItem
+                                          key={`${definition.key}-${option.label}-${option.value}`}
+                                          value={stringifyVariableOptionValue(
+                                            option.value,
+                                          )}
+                                        >
+                                          {option.label}
+                                        </SelectItem>
+                                      ),
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                              )
+                            ) : definition.type === "date" ||
+                              definition.type === "datetime" ? (
+                              <VariableDatePicker
+                                definition={definition}
+                                value={currentValue}
+                                onChange={(nextValue) =>
+                                  updateDashboardVariableValue(
+                                    definition,
+                                    nextValue,
+                                  )
+                                }
+                                className="mt-3 w-full justify-start border-white/10 bg-slate-950/60 text-slate-100 hover:bg-slate-900/80"
+                              />
+                            ) : (
+                              <input
+                                type="text"
+                                value={formatVariableValueForText(currentValue)}
+                                onChange={(event) =>
+                                  updateDashboardVariableValue(
+                                    definition,
+                                    parseVariableValueFromText(
+                                      event.target.value,
+                                      definition,
+                                    ),
+                                  )
+                                }
+                                placeholder={
+                                  definition.multiple
+                                    ? "Comma-separated values"
+                                    : "Enter value"
+                                }
+                                className="mt-3 w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none"
+                              />
+                            )}
+                          </div>
+                        );
+                      },
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div className="relative mt-6 min-h-80">
@@ -2793,6 +4028,146 @@ export default function PopulationDashboard() {
           </div>
         </div>
       )}
+
+      <Dialog
+        open={Boolean(widgetSettings)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setWidgetSettings(null);
+          }
+        }}
+      >
+        <DialogContent
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          className="max-h-[85vh] overflow-y-auto border-white/10 bg-slate-950/95 text-slate-100 sm:max-w-2xl"
+        >
+          <DialogHeader>
+            <DialogTitle>Filters</DialogTitle>
+            <DialogDescription className="text-slate-300">
+              {widgetSettings?.queryName || "Configure widget-level overrides"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {widgetSettings ? (
+            <div className="space-y-5">
+              {!widgetSettings.variableDefinitions.length ? (
+                <div className="rounded-lg border border-dashed border-white/10 px-4 py-6 text-sm text-slate-300">
+                  This query does not define runtime variables yet.
+                </div>
+              ) : (
+                widgetSettings.variableDefinitions.map((definition) => {
+                  const widgetOptions = definition.options ?? [];
+                  const widgetValue =
+                    widgetSettings.config.variables?.[definition.key];
+                  const resolvedWidgetValue =
+                    widgetValue ?? dashboardVariables[definition.key] ?? null;
+
+                  return (
+                    <div
+                      key={definition.key}
+                      className="rounded-xl border border-white/10 bg-slate-900/70 p-4"
+                    >
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="text-sm font-medium text-slate-100">
+                          {definition.label}
+                        </span>
+
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="inline-flex items-center text-slate-400 transition-colors hover:text-slate-200"
+                              aria-label={`More info about ${definition.label}`}
+                            >
+                              <IoIosInformationCircleOutline className="h-4 w-4" />
+                            </button>
+                          </TooltipTrigger>
+
+                          <TooltipContent
+                            side="right"
+                            className="flex items-center gap-2 rounded-md px-3 py-2 text-xs"
+                          >
+                            <span className="text-slate-400">
+                              Variable key:
+                            </span>
+                            <span className="font-mono uppercase tracking-[0.18em] text-slate-100 ">
+                              {definition.key}
+                            </span>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+
+                      <div className="mt-4">
+                        {definition.multiple && widgetOptions.length ? (
+                          <div>
+                            <MultiVariableCombobox
+                              options={widgetOptions}
+                              selectedValues={
+                                Array.isArray(resolvedWidgetValue)
+                                  ? resolvedWidgetValue.map(
+                                      stringifyVariableOptionValue,
+                                    )
+                                  : []
+                              }
+                              onChange={(nextValues) =>
+                                updateWidgetSettingsConfig((config) => ({
+                                  ...config,
+                                  variables: {
+                                    ...(config.variables ?? {}),
+                                    [definition.key]: nextValues.map((value) =>
+                                      coercePrimitiveValue(value, definition),
+                                    ),
+                                  },
+                                }))
+                              }
+                            />
+                          </div>
+                        ) : (
+                          <VariableValueInput
+                            definition={{
+                              ...definition,
+                              options: widgetOptions,
+                            }}
+                            value={resolvedWidgetValue}
+                            onChange={(value) =>
+                              updateWidgetSettingsConfig((config) => ({
+                                ...config,
+                                variables: {
+                                  ...(config.variables ?? {}),
+                                  [definition.key]: value,
+                                },
+                              }))
+                            }
+                            placeholder="Use global/default"
+                            className="w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none"
+                          />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="border-white/10 bg-slate-900/70 text-slate-100 hover:bg-slate-800 hover:text-slate-100"
+              onClick={() => setWidgetSettings(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              className="border-cyan-300/30 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30 hover:text-cyan-100"
+              onClick={() => void applyWidgetSettings()}
+            >
+              Apply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">

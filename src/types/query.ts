@@ -1,5 +1,10 @@
 export type QueryValue = string | number | boolean | null | undefined;
 export type QueryRow = Record<string, QueryValue>;
+export type QueryVariablePrimitive = string | number | boolean | null;
+export type QueryVariableValue =
+  | QueryVariablePrimitive
+  | QueryVariablePrimitive[];
+export type QueryVariableMap = Record<string, QueryVariableValue>;
 
 export type ChartType = string;
 export type QueryType = "visual" | "sql";
@@ -24,7 +29,33 @@ export interface Query {
   query_type?: QueryType;
   visual_config?: VisualQueryRequest | null;
   sql_text?: string | null;
+  variables?: QueryVariableDefinition[];
+  applied_variables?: QueryVariableMap;
+  variable_definitions?: QueryVariableDefinition[];
+  filter_data?: Record<string, QueryVariableOption[]>;
 }
+
+export type QueryVariableOption = {
+  label: string;
+  value: QueryVariablePrimitive;
+};
+
+export type QueryVariableSource = {
+  kind: string;
+  sql?: string;
+  value_field?: string;
+  label_field?: string;
+};
+
+export type QueryVariableDefinition = {
+  key: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  multiple?: boolean;
+  options?: QueryVariableOption[];
+  source?: QueryVariableSource;
+};
 
 export type Aggregation = {
   func: string;

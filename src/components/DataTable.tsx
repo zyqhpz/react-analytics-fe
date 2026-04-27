@@ -214,7 +214,11 @@ export function DataTable({
                 <PaginationLink
                   isActive
                   disabled
-                  className={classes?.paginationCurrent}
+                  size="default"
+                  className={
+                    classes?.paginationCurrent ??
+                    "min-w-16 justify-center px-3 tabular-nums"
+                  }
                 >
                   {pagination.pageIndex + 1} / {table.getPageCount()}
                 </PaginationLink>

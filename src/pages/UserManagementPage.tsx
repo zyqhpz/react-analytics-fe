@@ -509,12 +509,12 @@ export default function UserManagementPage() {
               >
                 Query Builder
               </Link>
-              <Link
+              {/* <Link
                 to="/graphql-playground"
                 className="rounded-lg border border-white/15 bg-slate-800/70 px-4 py-2 text-sm text-slate-100 transition hover:bg-slate-700"
               >
                 GraphQL Playground
-              </Link>
+              </Link> */}
             </div>
           </div>
         </div>
