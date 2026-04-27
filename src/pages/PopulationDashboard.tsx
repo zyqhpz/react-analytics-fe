@@ -51,6 +51,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -90,7 +91,7 @@ import {
   type QueryVariableMap,
   type QueryVariableOption,
 } from "@/types/query";
-import { ChevronDown, LayoutDashboard, LoaderCircle } from "lucide-react";
+import { LayoutDashboard, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 
 type BackendWidget = {
@@ -427,6 +428,7 @@ function MultiVariableCombobox({
       </PopoverTrigger>
       <PopoverContent
         align="start"
+        portalled={false}
         className="w-(--radix-popover-trigger-width) border-white/10 bg-slate-950/95 p-2 text-slate-100"
       >
         <div className="space-y-2">
@@ -455,42 +457,46 @@ function MultiVariableCombobox({
             <Checkbox checked={allSelected} className="pointer-events-none" />
             <span>{allSelected ? "Deselect all" : "Select all"}</span>
           </button>
-          <div className="max-h-64 space-y-1 overflow-y-auto">
-            {filteredOptions.length ? (
-              filteredOptions.map((option) => {
-                const optionValue = stringifyVariableOptionValue(option.value);
-                const checked = selectedValues.includes(optionValue);
+          <ScrollArea className="h-64 min-h-48 rounded-md bg-slate-950/95">
+            <div className="space-y-1 bg-slate-950/95 pr-3">
+              {filteredOptions.length ? (
+                filteredOptions.map((option) => {
+                  const optionValue = stringifyVariableOptionValue(
+                    option.value,
+                  );
+                  const checked = selectedValues.includes(optionValue);
 
-                return (
-                  <button
-                    key={`${option.label}-${option.value}`}
-                    type="button"
-                    disabled={disabled}
-                    className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm text-slate-100 hover:bg-slate-800"
-                    onClick={() =>
-                      onChange(
-                        checked
-                          ? selectedValues.filter(
-                              (value) => value !== optionValue,
-                            )
-                          : [...selectedValues, optionValue],
-                      )
-                    }
-                  >
-                    <Checkbox
-                      checked={checked}
-                      className="pointer-events-none"
-                    />
-                    <span>{option.label}</span>
-                  </button>
-                );
-              })
-            ) : (
-              <div className="px-2 py-3 text-sm text-slate-400">
-                No options found.
-              </div>
-            )}
-          </div>
+                  return (
+                    <button
+                      key={`${option.label}-${option.value}`}
+                      type="button"
+                      disabled={disabled}
+                      className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm text-slate-100 hover:bg-slate-800"
+                      onClick={() =>
+                        onChange(
+                          checked
+                            ? selectedValues.filter(
+                                (value) => value !== optionValue,
+                              )
+                            : [...selectedValues, optionValue],
+                        )
+                      }
+                    >
+                      <Checkbox
+                        checked={checked}
+                        className="pointer-events-none"
+                      />
+                      <span>{option.label}</span>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="px-2 py-3 text-sm text-slate-400">
+                  No options found.
+                </div>
+              )}
+            </div>
+          </ScrollArea>
         </div>
       </PopoverContent>
     </Popover>
@@ -4039,7 +4045,7 @@ export default function PopulationDashboard() {
       >
         <DialogContent
           onOpenAutoFocus={(event) => event.preventDefault()}
-          className="max-h-[85vh] overflow-y-auto border-white/10 bg-slate-950/95 text-slate-100 sm:max-w-2xl"
+          className="max-h-[85vh] overflow-visible border-white/10 bg-slate-950/95 text-slate-100 sm:max-w-2xl"
         >
           <DialogHeader>
             <DialogTitle>Filters</DialogTitle>
@@ -4049,7 +4055,7 @@ export default function PopulationDashboard() {
           </DialogHeader>
 
           {widgetSettings ? (
-            <div className="space-y-5">
+            <div className="max-h-[55vh] space-y-5 overflow-y-auto pr-1">
               {!widgetSettings.variableDefinitions.length ? (
                 <div className="rounded-lg border border-dashed border-white/10 px-4 py-6 text-sm text-slate-300">
                   This query does not define runtime variables yet.
