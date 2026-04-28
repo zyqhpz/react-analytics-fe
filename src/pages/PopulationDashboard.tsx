@@ -192,17 +192,19 @@ const getWidgetTablePageSize = (config?: DashboardWidgetConfig) => {
 function WidgetHeaderControls({
   widgetId,
   type,
+  hasTablePagination,
   tablePageSize,
   onTablePageSizeChange,
 }: {
   widgetId: string;
   type: ChartType;
+  hasTablePagination: boolean;
   tablePageSize: number;
   onTablePageSizeChange: (widgetId: string, pageSize: number) => void;
 }) {
   return (
     <div className="relative z-30 flex items-center gap-2">
-      {type === "table" ? (
+      {type === "table" && hasTablePagination ? (
         <Select
           value={String(tablePageSize)}
           onValueChange={(value) =>
@@ -2356,7 +2358,12 @@ export default function PopulationDashboard() {
   }, []);
 
   const renderWidgetHeaderControls = useCallback(
-    (id: string, type: ChartType, config?: DashboardWidgetConfig) => {
+    (
+      id: string,
+      type: ChartType,
+      config?: DashboardWidgetConfig,
+      dataLength?: number,
+    ) => {
       const mountEl = document.querySelector<HTMLElement>(
         `[data-widget-header-controls="${id}"]`,
       );
@@ -2367,12 +2374,16 @@ export default function PopulationDashboard() {
 
       const root = headerControlsRootsRef.current[id] ?? createRoot(mountEl);
       headerControlsRootsRef.current[id] = root;
+      const tablePageSize = getWidgetTablePageSize(config);
+      const widget = widgetsRef.current.find((item) => item.id === id);
+      const rowCount = dataLength ?? widget?.data?.length ?? 0;
 
       root.render(
         <WidgetHeaderControls
           widgetId={id}
           type={type}
-          tablePageSize={getWidgetTablePageSize(config)}
+          hasTablePagination={rowCount > tablePageSize}
+          tablePageSize={tablePageSize}
           onTablePageSizeChange={(widgetId, pageSize) =>
             widgetTableSizeChangeRef.current(widgetId, pageSize)
           }
@@ -2399,7 +2410,7 @@ export default function PopulationDashboard() {
 
       destroyChart(id);
       setWidgetBodyMode(id, type);
-      renderWidgetHeaderControls(id, type, config);
+      renderWidgetHeaderControls(id, type, config, data.length);
 
       if (type === "table") {
         const root = createRoot(el);
