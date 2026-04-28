@@ -34,7 +34,7 @@ import {
   fetchSavedQueries,
 } from "@/api/queries";
 import { CurrentUserBadge } from "@/components/CurrentUserBadge";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, type ResolvedDataTableModel } from "@/components/DataTable";
 import { VariableDatePicker } from "@/components/VariableDatePicker";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -707,10 +707,12 @@ async function mapWithConcurrency<T, R>(
 function TableWidgetView({
   data,
   schema,
+  onResolvedModelChange,
   tablePageSize = DEFAULT_TABLE_PAGE_SIZE,
 }: {
   data: QueryRow[];
   schema?: string[];
+  onResolvedModelChange?: (model: ResolvedDataTableModel) => void;
   tablePageSize?: number;
 }) {
   return (
@@ -720,6 +722,7 @@ function TableWidgetView({
       formatValue={formatTableValue}
       pageSize={tablePageSize}
       paginationThreshold={tablePageSize}
+      onResolvedModelChange={onResolvedModelChange}
       emptyMessage={
         <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-300">
           No data available.
@@ -1649,6 +1652,7 @@ export default function PopulationDashboard() {
   const chartsRef = useRef<Record<string, ChartsMeta>>({});
   const widgetsMetaRef = useRef<Record<string, WidgetMeta>>({});
   const widgetsRef = useRef<DashboardWidget[]>([]);
+  const tableModelsRef = useRef<Record<string, ResolvedDataTableModel>>({});
   const queriesRef = useRef<Query[]>([]);
   const dashboardVariablesRef = useRef<QueryVariableMap>({});
   const globalFilterKeySetRef = useRef<Set<string>>(new Set());
@@ -2210,7 +2214,12 @@ export default function PopulationDashboard() {
       return;
     }
 
-    const csv = buildCsvContent(widget.data ?? [], widget.schema);
+    const tableModel =
+      widget.chartType === "table" ? tableModelsRef.current[id] : undefined;
+    const csv = buildCsvContent(
+      tableModel?.rows ?? widget.data ?? [],
+      tableModel?.columns ?? widget.schema,
+    );
     if (!csv) {
       toast.error("No data available to export.");
       return;
@@ -2245,6 +2254,7 @@ export default function PopulationDashboard() {
     meta?.root?.unmount?.();
     meta?.statusRoot?.unmount?.();
     delete chartsRef.current[id];
+    delete tableModelsRef.current[id];
 
     headerControlsRootsRef.current[id]?.unmount?.();
     delete headerControlsRootsRef.current[id];
@@ -2414,11 +2424,18 @@ export default function PopulationDashboard() {
 
       if (type === "table") {
         const root = createRoot(el);
+        tableModelsRef.current[id] = {
+          columns: getColumns(data, schema),
+          rows: data,
+        };
         root.render(
           <TableWidgetView
             data={data}
             schema={schema}
             tablePageSize={getWidgetTablePageSize(config)}
+            onResolvedModelChange={(model) => {
+              tableModelsRef.current[id] = model;
+            }}
           />,
         );
         chartsRef.current[id] = { type, root };
