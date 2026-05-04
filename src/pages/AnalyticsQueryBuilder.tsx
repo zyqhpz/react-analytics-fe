@@ -68,13 +68,7 @@ import {
   type QueryVariableOption,
 } from "@/types/query";
 import type { UserDepartment } from "@/types/user";
-import {
-  ArrowDown,
-  ArrowUp,
-  Columns3,
-  GripVertical,
-  LoaderCircle,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, GripVertical, LoaderCircle } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -4092,7 +4086,6 @@ export default function App() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <CardTitle className="flex items-center gap-2">
-              <Columns3 className="size-5" />
               Result Columns
             </CardTitle>
             {orderedVisualResultColumns.length > 0 ? (
