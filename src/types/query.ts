@@ -58,12 +58,14 @@ export type QueryVariableDefinition = {
 };
 
 export type Aggregation = {
+  id?: string;
   func: string;
   field: string;
   alias?: string;
 };
 
 export type SelectedColumn = {
+  id?: string;
   name: string;
   alias?: string;
 };
@@ -73,6 +75,7 @@ export type VisualSelectColumn = string | SelectedColumn;
 export type PivotValueValue = string | number | boolean | null;
 
 export type PivotValue = {
+  id?: string;
   value: PivotValueValue;
   alias: string;
 };
@@ -88,6 +91,11 @@ export type PivotOptions = {
 export type OrderBy = {
   field: string;
   direction: string;
+};
+
+export type ResultColumnOrderItem = {
+  kind: "select" | "aggregation" | "pivot";
+  id: string;
 };
 
 export type Join = {
@@ -118,6 +126,7 @@ export type VisualQueryRequest = {
   joins: Join[];
   select: VisualSelectColumn[];
   aggregations: Aggregation[];
+  result_column_order?: ResultColumnOrderItem[];
   group_by: string[];
   fill_missing_dates?: boolean;
   pivot?: PivotOptions;

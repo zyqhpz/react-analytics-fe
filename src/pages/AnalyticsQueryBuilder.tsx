@@ -68,8 +68,21 @@ import {
   type QueryVariableOption,
 } from "@/types/query";
 import type { UserDepartment } from "@/types/user";
-import { LoaderCircle } from "lucide-react";
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Columns3,
+  GripVertical,
+  LoaderCircle,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { FaCheckCircle } from "react-icons/fa";
 import { IoArrowBack } from "react-icons/io5";
 import {
@@ -81,7 +94,9 @@ import {
   type RuleGroupType,
   type RuleType,
   type ValueEditorProps,
+  type ValueSourceFlexibleOptions,
   type ValueSourceSelectorProps,
+  type ValueSources,
 } from "react-querybuilder";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -99,6 +114,7 @@ import type {
   PivotValue,
   PivotValueValue,
   QueryRow,
+  ResultColumnOrderItem,
   SelectedColumn,
   VisualQueryRequest,
   VisualSelectColumn,
@@ -106,6 +122,86 @@ import type {
 
 const getResultColumns = (data: QueryRow[] = []): string[] =>
   Array.from(new Set(data.flatMap((row) => Object.keys(row))));
+
+const moveArrayItem = <T,>(
+  items: T[],
+  fromIndex: number,
+  toIndex: number,
+): T[] => {
+  if (
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= items.length ||
+    toIndex >= items.length
+  ) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  const [item] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, item);
+  return nextItems;
+};
+
+const normalizeResultColumnId = (value: string, fallback: string) => {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return normalized || fallback;
+};
+
+const ensureUniqueResultColumnId = (id: string, usedIds: Set<string>) => {
+  let nextId = id;
+  let suffix = 2;
+
+  while (usedIds.has(nextId)) {
+    nextId = `${id}_${suffix}`;
+    suffix += 1;
+  }
+
+  usedIds.add(nextId);
+  return nextId;
+};
+
+const getResultColumnOrderKey = (
+  item: Pick<ResultColumnOrderItem, "kind" | "id">,
+) => `${item.kind}:${item.id}`;
+
+const areResultColumnOrdersEqual = (
+  left: ResultColumnOrderItem[],
+  right: ResultColumnOrderItem[],
+) =>
+  left.length === right.length &&
+  left.every(
+    (item, index) =>
+      item.kind === right[index]?.kind && item.id === right[index]?.id,
+  );
+
+const reconcileResultColumnOrder = (
+  preferredOrder: ResultColumnOrderItem[] = [],
+  availableOrder: ResultColumnOrderItem[] = [],
+): ResultColumnOrderItem[] => {
+  const availableKeys = new Set(availableOrder.map(getResultColumnOrderKey));
+  const seenKeys = new Set<string>();
+
+  const preservedOrder = preferredOrder.filter((item) => {
+    const key = getResultColumnOrderKey(item);
+    if (!availableKeys.has(key) || seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
+  });
+
+  const missingOrder = availableOrder.filter((item) => {
+    const key = getResultColumnOrderKey(item);
+    return !seenKeys.has(key);
+  });
+
+  return [...preservedOrder, ...missingOrder];
+};
 
 const toCsvValue = (value: unknown): string => {
   if (value === null || value === undefined) return "";
@@ -161,6 +257,16 @@ type ColumnOption = {
   label: string;
   name: string;
   type?: string;
+};
+
+type VisualResultColumnKind = "select" | "aggregation" | "pivot";
+
+type VisualResultColumn = {
+  id: string;
+  detail: string;
+  kind: VisualResultColumnKind;
+  outputName: string;
+  sourceIndex: number;
 };
 
 type SharedSqlConfig = {
@@ -722,17 +828,25 @@ export default function App() {
   const [pivotValueType, setPivotValueType] = useState("string");
   const [pivotValueInput, setPivotValueInput] = useState("");
   const [pivotAliasInput, setPivotAliasInput] = useState("");
+  const [resultColumnOrder, setResultColumnOrder] = useState<
+    ResultColumnOrderItem[]
+  >([]);
   const [fillMissingDates, setFillMissingDates] = useState(false);
   const [limit, setLimit] = useState("");
   const [orderBy, setOrderBy] = useState<OrderBy[]>([]);
   const [results, setResults] = useState<QueryRow[]>([]);
   const [resultsPageSize, setResultsPageSize] = useState("25");
-  const [resolvedResultsTable, setResolvedResultsTable] =
-    useState<ResolvedDataTableModel>({
-      columns: [],
-      rows: [],
-    });
+  const resolvedResultsTableRef = useRef<ResolvedDataTableModel>({
+    columns: [],
+    rows: [],
+  });
 
+  const handleResolvedResultsTableChange = useCallback(
+    (nextModel: ResolvedDataTableModel) => {
+      resolvedResultsTableRef.current = nextModel;
+    },
+    [],
+  );
   const [savedQueries, setSavedQueries] = useState<Query[]>([]);
   const [hasLoadedSavedQueries, setHasLoadedSavedQueries] = useState(false);
   const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null);
@@ -798,6 +912,31 @@ export default function App() {
     return match?.[1]?.trim() || null;
   };
 
+  const getUnqualifiedColumnName = (value: string) => {
+    if (!value.includes(".")) return value;
+    return value.split(".").pop() || value;
+  };
+
+  const getSelectResultColumnName = (column: SelectedColumn) => {
+    const alias = column.alias?.trim();
+    if (alias) return alias;
+
+    const expressionField = getExpressionField(column.name);
+    if (expressionField) {
+      const expressionName = column.name.split("(")[0].toLowerCase();
+      return `${expressionName}_${getUnqualifiedColumnName(expressionField)}`;
+    }
+
+    return getUnqualifiedColumnName(column.name);
+  };
+
+  const getSelectColumnId = (column: SelectedColumn) =>
+    column.id?.trim() ||
+    normalizeResultColumnId(
+      getSelectResultColumnName(column),
+      `select_${normalizeResultColumnId(column.name, "column")}`,
+    );
+
   const isDateGroupExpression = (value: string) =>
     /^(?:DATE|HOURLY|WEEKLY|MONTHLY)\(.+\)$/.test(value);
 
@@ -830,11 +969,21 @@ export default function App() {
   const getAggregationAlias = (agg: Aggregation) =>
     agg.alias?.trim() || getDefaultAggregationAlias(agg);
 
+  const getAggregationId = (agg: Aggregation) =>
+    agg.id?.trim() ||
+    normalizeResultColumnId(
+      getAggregationAlias(agg),
+      `aggregation_${normalizeResultColumnId(`${agg.func}_${agg.field}`, "value")}`,
+    );
+
   const getSelectedColumnName = (column: VisualSelectColumn) =>
     typeof column === "string" ? column : column.name;
 
   const getSelectedColumnAlias = (column: VisualSelectColumn) =>
     typeof column === "string" ? "" : column.alias?.trim() || "";
+
+  const getSelectedColumnId = (column: VisualSelectColumn) =>
+    typeof column === "string" ? "" : column.id?.trim() || "";
 
   const normalizeSelectedColumns = (
     columns: VisualQueryRequest["select"] = [],
@@ -846,7 +995,9 @@ export default function App() {
       }
 
       const alias = getSelectedColumnAlias(column);
-      acc.push(alias ? { name, alias } : { name });
+      const id = getSelectedColumnId(column);
+      const nextColumn = alias ? { id, name, alias } : { id, name };
+      acc.push({ ...nextColumn, id: id || getSelectColumnId(nextColumn) });
       return acc;
     }, []);
 
@@ -857,6 +1008,15 @@ export default function App() {
     if (typeof value === "string") return value;
     return String(value);
   };
+
+  const getPivotValueId = (pivotValue: PivotValue, field = pivotField) =>
+    pivotValue.id?.trim() ||
+    normalizeResultColumnId(
+      field
+        ? `${field}_${stringifyPivotValue(pivotValue.value)}`
+        : pivotValue.alias,
+      `pivot_${normalizeResultColumnId(pivotValue.alias, "value")}`,
+    );
 
   const parsePivotValue = (): PivotValueValue | undefined => {
     const rawValue = pivotValueInput.trim();
@@ -996,6 +1156,71 @@ export default function App() {
     [normalizedVariables],
   );
 
+  const buildAvailableResultColumnOrder = (
+    columns: SelectedColumn[],
+    nextAggregations: Aggregation[],
+    nextPivotValues: PivotValue[],
+    includePivot: boolean,
+    nextPivotField = pivotField,
+  ): ResultColumnOrderItem[] => {
+    const usedSelectIds = new Set<string>();
+    const usedAggregationIds = new Set<string>();
+    const usedPivotIds = new Set<string>();
+
+    return [
+      ...columns.map((column) => ({
+        kind: "select" as const,
+        id: ensureUniqueResultColumnId(
+          getSelectColumnId(column),
+          usedSelectIds,
+        ),
+      })),
+      ...nextAggregations.map((agg) => ({
+        kind: "aggregation" as const,
+        id: ensureUniqueResultColumnId(
+          getAggregationId(agg),
+          usedAggregationIds,
+        ),
+      })),
+      ...(includePivot
+        ? nextPivotValues.map((pivotValue) => ({
+            kind: "pivot" as const,
+            id: ensureUniqueResultColumnId(
+              getPivotValueId(pivotValue, nextPivotField),
+              usedPivotIds,
+            ),
+          }))
+        : []),
+    ];
+  };
+
+  const normalizeSavedResultColumnOrder = (
+    order: VisualQueryRequest["result_column_order"],
+    columns: SelectedColumn[],
+    nextAggregations: Aggregation[],
+    nextPivotValues: PivotValue[],
+    includePivot: boolean,
+    nextPivotField = pivotField,
+  ) =>
+    reconcileResultColumnOrder(
+      Array.isArray(order)
+        ? order.filter(
+            (item): item is ResultColumnOrderItem =>
+              Boolean(item?.id?.trim()) &&
+              (item.kind === "select" ||
+                item.kind === "aggregation" ||
+                item.kind === "pivot"),
+          )
+        : [],
+      buildAvailableResultColumnOrder(
+        columns,
+        nextAggregations,
+        nextPivotValues,
+        includePivot,
+        nextPivotField,
+      ),
+    );
+
   const resetVisualBuilderState = () => {
     setJoins([]);
     setSelectedColumns([]);
@@ -1014,6 +1239,7 @@ export default function App() {
     setPivotValueType("string");
     setPivotValueInput("");
     setPivotAliasInput("");
+    setResultColumnOrder([]);
     setFillMissingDates(false);
     setLimit("");
     setOrderBy([]);
@@ -1023,30 +1249,48 @@ export default function App() {
   };
 
   const applyVisualConfig = (config: VisualQueryRequest) => {
+    const pivot = config.pivot as PivotOptions | undefined;
+    const nextSelectedColumns = normalizeSelectedColumns(config.select || []);
+    const nextAggregations = (config.aggregations || []).map(
+      (agg: Aggregation) => ({
+        ...agg,
+        id: getAggregationId(agg),
+        alias: agg.alias || "",
+      }),
+    );
+    const nextPivotValues = (pivot?.values || []).map((pivotValue) => ({
+      ...pivotValue,
+      id: getPivotValueId(pivotValue, pivot?.pivot_field || ""),
+    }));
+
     setTable(config.table || "");
     setJoins(config.joins || []);
-    setSelectedColumns(normalizeSelectedColumns(config.select || []));
-    setAggregations(
-      (config.aggregations || []).map((agg: Aggregation) => ({
-        ...agg,
-        alias: agg.alias || "",
-      })),
-    );
+    setSelectedColumns(nextSelectedColumns);
+    setAggregations(nextAggregations);
     setGroupBy(config.group_by || []);
     setGroupByDateField("");
     setGroupByDateType("daily");
     setAggregationFunc("");
     setAggregationField("");
     setAggregationAliasInput("");
-    const pivot = config.pivot as PivotOptions | undefined;
     setPivotEnabled(Boolean(pivot?.enabled));
     setPivotField(pivot?.pivot_field || "");
     setPivotValueField(pivot?.value_field || "");
     setPivotFunc(pivot?.func || "");
-    setPivotValues(pivot?.values || []);
+    setPivotValues(nextPivotValues);
     setPivotValueType("string");
     setPivotValueInput("");
     setPivotAliasInput("");
+    setResultColumnOrder(
+      normalizeSavedResultColumnOrder(
+        config.result_column_order,
+        nextSelectedColumns,
+        nextAggregations,
+        nextPivotValues,
+        Boolean(pivot?.enabled),
+        pivot?.pivot_field || "",
+      ),
+    );
     setFillMissingDates(Boolean(config.fill_missing_dates));
     setLimit(config.limit ? String(config.limit) : "");
     setOrderBy(config.order_by || []);
@@ -1077,7 +1321,8 @@ export default function App() {
       table,
       joins,
       select: effectiveSelectColumns,
-      aggregations,
+      aggregations: effectiveAggregations,
+      result_column_order: effectiveResultColumnOrder,
       group_by: groupBy,
       ...(fillMissingDates ? { fill_missing_dates: true } : {}),
       ...(pivot ? { pivot } : {}),
@@ -1398,6 +1643,7 @@ export default function App() {
     setPivotValueType("string");
     setPivotValueInput("");
     setPivotAliasInput("");
+    setResultColumnOrder([]);
     setFillMissingDates(false);
     setLimit("");
     setResults([]);
@@ -1581,7 +1827,7 @@ export default function App() {
     setSelectedColumns((prev) => {
       const updated = prev.some((item) => item.name === column)
         ? prev.filter((item) => item.name !== column)
-        : [...prev, { name: column }];
+        : [...prev, { id: getSelectColumnId({ name: column }), name: column }];
 
       // Auto-add join if selecting a joined field.
       const joinTable = getJoinTableFromField(column);
@@ -1600,9 +1846,38 @@ export default function App() {
     setSelectedColumns((prev) =>
       prev.map((item) => {
         if (item.name !== column) return item;
-        if (!alias.trim()) return { name: item.name };
-        return { ...item, alias };
+        const id = item.id || getSelectColumnId(item);
+        if (!alias.trim()) return { id, name: item.name };
+        return { ...item, id, alias };
       }),
+    );
+  };
+
+  const moveVisualResultColumn = (
+    column: VisualResultColumn,
+    direction: -1 | 1,
+  ) => {
+    const fromIndex = orderedVisualResultColumns.findIndex(
+      (item) =>
+        getResultColumnOrderKey(item) === getResultColumnOrderKey(column),
+    );
+    const toIndex = fromIndex + direction;
+
+    if (
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      toIndex >= orderedVisualResultColumns.length
+    ) {
+      return;
+    }
+
+    setResultColumnOrder(
+      moveArrayItem(orderedVisualResultColumns, fromIndex, toIndex).map(
+        (item) => ({
+          kind: item.kind,
+          id: item.id,
+        }),
+      ),
     );
   };
 
@@ -1619,13 +1894,21 @@ export default function App() {
           return prev;
         }
 
-        return [...prev, { name: column, alias: trimmedAlias }];
+        return [
+          ...prev,
+          {
+            id: getSelectColumnId({ name: column, alias: trimmedAlias }),
+            name: column,
+            alias: trimmedAlias,
+          },
+        ];
       }
 
       return prev.map((item, index) => {
         if (index !== existingIndex) return item;
-        if (!trimmedAlias) return { name: item.name };
-        return { ...item, alias: trimmedAlias };
+        const id = item.id || getSelectColumnId(item);
+        if (!trimmedAlias) return { id, name: item.name };
+        return { ...item, id, alias: trimmedAlias };
       });
     });
   };
@@ -1717,18 +2000,158 @@ export default function App() {
     ),
   );
 
-  const effectiveSelectColumns: SelectedColumn[] = [
-    ...selectedColumns,
-    ...groupBy
-      .filter(
-        (groupField) =>
-          !selectedColumns.some((column) => column.name === groupField),
-      )
-      .map((groupField) => ({ name: groupField })),
-  ].map((column: SelectedColumn) => {
-    const alias = column.alias?.trim();
-    return alias ? { ...column, alias } : { name: column.name };
-  });
+  const effectiveSelectColumns: SelectedColumn[] = (() => {
+    const usedIds = new Set<string>();
+
+    return [
+      ...selectedColumns,
+      ...groupBy
+        .filter(
+          (groupField) =>
+            !selectedColumns.some((column) => column.name === groupField),
+        )
+        .map((groupField) => ({ name: groupField })),
+    ].map((column: SelectedColumn) => {
+      const alias = column.alias?.trim();
+      const normalizedColumn = alias
+        ? { ...column, alias }
+        : { id: column.id, name: column.name };
+
+      return {
+        ...normalizedColumn,
+        id: ensureUniqueResultColumnId(
+          getSelectColumnId(normalizedColumn),
+          usedIds,
+        ),
+      };
+    });
+  })();
+
+  const effectiveAggregations: Aggregation[] = (() => {
+    const usedIds = new Set<string>();
+
+    return aggregations.map((agg) => ({
+      id: ensureUniqueResultColumnId(getAggregationId(agg), usedIds),
+      func: agg.func,
+      field: agg.field,
+      alias: getAggregationAlias(agg),
+    }));
+  })();
+
+  const effectivePivotValues: PivotValue[] = (() => {
+    const usedIds = new Set<string>();
+
+    return pivotValues.map((pivotValue) => ({
+      id: ensureUniqueResultColumnId(getPivotValueId(pivotValue), usedIds),
+      value: pivotValue.value,
+      alias: pivotValue.alias.trim(),
+    }));
+  })();
+
+  const visualResultColumns: VisualResultColumn[] = [
+    ...effectiveSelectColumns.map((column, index) => ({
+      id: getSelectColumnId(column),
+      detail: column.alias?.trim()
+        ? `${column.name} AS ${column.alias.trim()}`
+        : column.name,
+      kind: "select" as const,
+      outputName: getSelectResultColumnName(column),
+      sourceIndex: index,
+    })),
+    ...effectiveAggregations.map((agg, index) => ({
+      id: getAggregationId(agg),
+      detail: `${agg.func}(${agg.field})`,
+      kind: "aggregation" as const,
+      outputName: getAggregationAlias(agg),
+      sourceIndex: index,
+    })),
+    ...(pivotEnabled
+      ? effectivePivotValues.map((pivotValue, index) => ({
+          id: getPivotValueId(pivotValue),
+          detail: `Pivot value: ${stringifyPivotValue(pivotValue.value)}`,
+          kind: "pivot" as const,
+          outputName: pivotValue.alias.trim(),
+          sourceIndex: index,
+        }))
+      : []),
+  ].filter((column) => hasSelectValue(column.outputName));
+
+  const availableResultColumnOrder = buildAvailableResultColumnOrder(
+    effectiveSelectColumns,
+    effectiveAggregations,
+    effectivePivotValues,
+    pivotEnabled,
+  );
+  const effectiveResultColumnOrder = reconcileResultColumnOrder(
+    resultColumnOrder,
+    availableResultColumnOrder,
+  );
+  const visualResultColumnByKey = new Map(
+    visualResultColumns.map((column) => [
+      getResultColumnOrderKey(column),
+      column,
+    ]),
+  );
+  const orderedVisualResultColumns = effectiveResultColumnOrder
+    .map((item) => visualResultColumnByKey.get(getResultColumnOrderKey(item)))
+    .filter((column): column is VisualResultColumn => Boolean(column));
+  const visualResultColumnKeys = useMemo(
+    () =>
+      Array.from(
+        new Set(orderedVisualResultColumns.map((column) => column.outputName)),
+      ),
+    [orderedVisualResultColumns],
+  );
+  const availableResultColumnOrderSignature = availableResultColumnOrder
+    .map(getResultColumnOrderKey)
+    .join("|");
+
+  useEffect(() => {
+    setResultColumnOrder((prev) => {
+      const next = reconcileResultColumnOrder(prev, availableResultColumnOrder);
+      return areResultColumnOrdersEqual(prev, next) ? prev : next;
+    });
+  }, [availableResultColumnOrderSignature]);
+
+  const getQueryBuilderValueSources = useCallback(
+    (
+      _field: string,
+      _operator: string,
+      _misc: { fieldData: unknown },
+    ): ValueSources | ValueSourceFlexibleOptions => ["value", "field"],
+    [],
+  );
+
+  const queryBuilderControlElements = useMemo(
+    () => ({
+      fieldSelector: GroupedFieldSelector,
+      operatorSelector: ThemedOperatorSelector,
+      valueEditor: VariableAwareValueEditor,
+      valueSourceSelector: VariableValueSourceSelector,
+    }),
+    [],
+  );
+
+  const queryBuilderControlClassnames = useMemo(
+    () => ({
+      queryBuilder: "space-y-4",
+      ruleGroup:
+        "border-l-4 border-primary/40 pl-4 space-y-4 bg-muted/20 rounded-lg p-4",
+      combinators: "border rounded-md px-2 py-1 cursor-pointer",
+      addRule:
+        "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
+      addGroup:
+        "border border-gray-700/80 bg-background text-cyan-900 hover:border-gray-800 hover:bg-cyan-50 rounded-md px-3 py-1 cursor-pointer transition",
+      removeRule: "text-destructive hover:underline cursor-pointer",
+      removeGroup: "text-destructive hover:underline cursor-pointer",
+      fields:
+        "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+      operators:
+        "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
+      value: "border rounded-md px-2 py-1",
+    }),
+    [],
+  );
 
   const havingFields = aggregationAliases.map((alias) => ({
     name: alias,
@@ -1743,7 +2166,7 @@ export default function App() {
       pivot_field: pivotField,
       value_field: pivotValueField,
       func: pivotFunc,
-      values: pivotValues,
+      values: effectivePivotValues,
     };
   };
 
@@ -1905,8 +2328,8 @@ export default function App() {
 
   const exportResultsToCsv = () => {
     const csv = buildCsvContent(
-      resolvedResultsTable.rows,
-      resolvedResultsTable.columns,
+      resolvedResultsTableRef.current.rows,
+      resolvedResultsTableRef.current.columns,
     );
 
     if (!csv) {
@@ -1951,6 +2374,7 @@ export default function App() {
     pivotValueField,
     pivotFunc,
     pivotValues,
+    resultColumnOrder,
     limit,
     fillMissingDates,
     testVariableInputs,
@@ -2022,6 +2446,7 @@ export default function App() {
     pivotFunc,
     pivotValueField,
     pivotValues,
+    resultColumnOrder,
     query,
     queryDescription,
     queryName,
@@ -2157,6 +2582,26 @@ export default function App() {
 
   const dateColumns = getAllColumns().filter(
     (col) => hasSelectValue(col.name) && isDateLikeColumn(col.type, col.name),
+  );
+
+  const resultColumnsFromData = useMemo(
+    () => getResultColumns(results),
+    [results],
+  );
+
+  const resultDisplayColumns = useMemo(
+    () =>
+      queryType === "visual"
+        ? [
+            ...visualResultColumnKeys.filter((column) =>
+              resultColumnsFromData.includes(column),
+            ),
+            ...resultColumnsFromData.filter(
+              (column) => !visualResultColumnKeys.includes(column),
+            ),
+          ]
+        : undefined,
+    [queryType, visualResultColumnKeys, resultColumnsFromData],
   );
 
   if (!schema || !tableSchema) {
@@ -3211,6 +3656,11 @@ export default function App() {
                     setAggregations((prev) => [
                       ...prev,
                       {
+                        id: getAggregationId({
+                          func,
+                          field,
+                          alias: aggregationAliasInput.trim(),
+                        }),
                         func,
                         field,
                         alias: aggregationAliasInput.trim(),
@@ -3242,7 +3692,11 @@ export default function App() {
                         setAggregations((prev) =>
                           prev.map((item, itemIndex) =>
                             itemIndex === index
-                              ? { ...item, alias: e.target.value }
+                              ? {
+                                  ...item,
+                                  id: item.id || getAggregationId(item),
+                                  alias: e.target.value,
+                                }
                               : item,
                           ),
                         )
@@ -3394,6 +3848,10 @@ export default function App() {
                         setPivotValues((prev) => [
                           ...prev,
                           {
+                            id: getPivotValueId(
+                              { value: parsedValue, alias },
+                              pivotField,
+                            ),
                             value: parsedValue,
                             alias,
                           },
@@ -3451,33 +3909,10 @@ export default function App() {
                   fields={groupedQueryBuilderFields}
                   query={query}
                   onQueryChange={setQuery}
-                  getValueSources={() => ["value", "field"]}
+                  getValueSources={getQueryBuilderValueSources}
                   context={queryBuilderValueEditorContext}
-                  controlElements={{
-                    fieldSelector: GroupedFieldSelector,
-                    operatorSelector: ThemedOperatorSelector,
-                    valueEditor: VariableAwareValueEditor,
-                    valueSourceSelector: VariableValueSourceSelector,
-                  }}
-                  controlClassnames={{
-                    queryBuilder: "space-y-4",
-                    ruleGroup:
-                      "border-l-4 border-primary/40 pl-4 space-y-4 bg-muted/20 rounded-lg p-4",
-                    combinators: "border rounded-md px-2 py-1 cursor-pointer",
-                    addRule:
-                      "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
-                    addGroup:
-                      "border border-gray-700/80 bg-background text-cyan-900 hover:border-gray-800 hover:bg-cyan-50 rounded-md px-3 py-1 cursor-pointer transition",
-                    removeRule:
-                      "text-destructive hover:underline cursor-pointer",
-                    removeGroup:
-                      "text-destructive hover:underline cursor-pointer",
-                    fields:
-                      "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
-                    operators:
-                      "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
-                    value: "border rounded-md px-2 py-1",
-                  }}
+                  controlElements={queryBuilderControlElements}
+                  controlClassnames={queryBuilderControlClassnames}
                 />
               </div>
             </CardContent>
@@ -3496,33 +3931,10 @@ export default function App() {
                     fields={havingFields}
                     query={having}
                     onQueryChange={setHaving}
-                    getValueSources={() => ["value", "field"]}
+                    getValueSources={getQueryBuilderValueSources}
                     context={queryBuilderValueEditorContext}
-                    controlElements={{
-                      fieldSelector: GroupedFieldSelector,
-                      operatorSelector: ThemedOperatorSelector,
-                      valueEditor: VariableAwareValueEditor,
-                      valueSourceSelector: VariableValueSourceSelector,
-                    }}
-                    controlClassnames={{
-                      queryBuilder: "space-y-4",
-                      ruleGroup:
-                        "border-l-4 border-primary/40 pl-4 space-y-4 bg-muted/20 rounded-lg p-4",
-                      combinators: "border rounded-md px-2 py-1 cursor-pointer",
-                      addRule:
-                        "bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1 cursor-pointer transition",
-                      addGroup:
-                        "border border-gray-700/80 bg-background text-cyan-900 hover:border-gray-800 hover:bg-cyan-50 rounded-md px-3 py-1 cursor-pointer transition",
-                      removeRule:
-                        "text-destructive hover:underline cursor-pointer",
-                      removeGroup:
-                        "text-destructive hover:underline cursor-pointer",
-                      fields:
-                        "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
-                      operators:
-                        "border rounded-md px-2 py-1 cursor-pointer hover:border-primary/40 transition",
-                      value: "border rounded-md px-2 py-1",
-                    }}
+                    controlElements={queryBuilderControlElements}
+                    controlClassnames={queryBuilderControlClassnames}
                   />
                 </div>
               </CardContent>
@@ -3675,6 +4087,98 @@ export default function App() {
         </Card>
       )}
 
+      {/* RESULT COLUMNS */}
+      {queryType === "visual" && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-4">
+            <CardTitle className="flex items-center gap-2">
+              <Columns3 className="size-5" />
+              Result Columns
+            </CardTitle>
+            {orderedVisualResultColumns.length > 0 ? (
+              <span className="rounded-md border px-2 py-1 text-xs font-medium text-muted-foreground">
+                {orderedVisualResultColumns.length} column
+                {orderedVisualResultColumns.length === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </CardHeader>
+          <CardContent>
+            {orderedVisualResultColumns.length > 0 ? (
+              <div className="space-y-2">
+                {orderedVisualResultColumns.map((column, index) => {
+                  const canMoveUp = index > 0;
+                  const canMoveDown =
+                    index < orderedVisualResultColumns.length - 1;
+                  const kindLabel =
+                    column.kind === "select"
+                      ? "Select"
+                      : column.kind === "aggregation"
+                        ? "Aggregation"
+                        : "Pivot";
+
+                  return (
+                    <div
+                      key={getResultColumnOrderKey(column)}
+                      className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3 transition hover:bg-muted/40"
+                    >
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <GripVertical className="size-4" />
+                        <span className="min-w-6 text-right text-sm tabular-nums">
+                          {index + 1}
+                        </span>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-medium">
+                            {column.outputName}
+                          </span>
+                          <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                            {kindLabel}
+                          </span>
+                        </div>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {column.detail}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon-sm"
+                          aria-label={`Move ${column.outputName} up`}
+                          title="Move up"
+                          disabled={!canMoveUp}
+                          onClick={() => moveVisualResultColumn(column, -1)}
+                        >
+                          <ArrowUp className="size-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon-sm"
+                          aria-label={`Move ${column.outputName} down`}
+                          title="Move down"
+                          disabled={!canMoveDown}
+                          onClick={() => moveVisualResultColumn(column, 1)}
+                        >
+                          <ArrowDown className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                No result columns selected yet.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* RUN QUERY */}
       <div className="flex items-center gap-3">
         <Button
@@ -3803,6 +4307,7 @@ export default function App() {
           <CardContent>
             <DataTable
               data={results}
+              columns={resultDisplayColumns}
               formatValue={formatResultValue}
               pageSize={Number(resultsPageSize)}
               paginationThreshold={50}
@@ -3812,7 +4317,7 @@ export default function App() {
                   "mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
                 paginationText: "text-sm text-muted-foreground",
               }}
-              onResolvedModelChange={setResolvedResultsTable}
+              onResolvedModelChange={handleResolvedResultsTableChange}
             />
           </CardContent>
         </Card>
