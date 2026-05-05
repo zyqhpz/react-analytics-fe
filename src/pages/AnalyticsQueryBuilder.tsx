@@ -56,6 +56,7 @@ import {
   getQueryVariableDefinitions,
   getVariableOptionFromSelectValue,
   getVariableSelectValue,
+  normalizeQueryVariableDefinitions,
   parseVariableValueFromText,
   stringifyVariableOptionValue,
   toVariableSelectOptions,
@@ -284,6 +285,8 @@ type FilterReferenceSection = {
 
 const QUERY_TYPE_SEARCH_PARAM = "queryType";
 const QUERY_CONFIG_SEARCH_PARAM = "config";
+const QUERY_VARIABLES_SEARCH_PARAM = "variables";
+const QUERY_TEST_VARIABLE_INPUTS_SEARCH_PARAM = "testVariableInputs";
 const QUERY_NAME_SEARCH_PARAM = "queryName";
 const QUERY_DESCRIPTION_SEARCH_PARAM = "queryDescription";
 const SAVED_QUERY_ID_SEARCH_PARAM = "savedQueryId";
@@ -312,6 +315,69 @@ const EMPTY_TEST_VARIABLE_VALUE = "__none__";
 
 const isNonEmptySelectValue = (value: string | null | undefined) =>
   typeof value === "string" && value.trim().length > 0;
+
+const isRecordValue = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseSearchParamJson = (value: string): unknown =>
+  JSON.parse(value) as unknown;
+
+const normalizeTestVariableInputs = (
+  value: unknown,
+): Record<string, string> => {
+  if (!isRecordValue(value)) {
+    return {};
+  }
+
+  return Object.entries(value).reduce<Record<string, string>>(
+    (acc, [key, item]) => {
+      const normalizedKey = key.trim();
+      if (!normalizedKey) {
+        return acc;
+      }
+
+      if (Array.isArray(item)) {
+        acc[normalizedKey] = item.map((part) => String(part ?? "")).join(", ");
+        return acc;
+      }
+
+      if (
+        item === null ||
+        item === undefined ||
+        typeof item === "string" ||
+        typeof item === "number" ||
+        typeof item === "boolean"
+      ) {
+        acc[normalizedKey] = item == null ? "" : String(item);
+      }
+
+      return acc;
+    },
+    {},
+  );
+};
+
+const buildTestVariableInputsForDefinitions = (
+  variableDefinitions: QueryVariableDefinition[],
+  inputs: Record<string, string> = {},
+): Record<string, string> =>
+  Object.fromEntries(
+    variableDefinitions.map((variable) => [
+      variable.key,
+      inputs[variable.key] ?? "",
+    ]),
+  );
+
+const buildAppliedVariableInputs = (
+  variableDefinitions: QueryVariableDefinition[],
+  appliedVariables?: QueryVariableMap,
+): Record<string, string> =>
+  Object.fromEntries(
+    variableDefinitions.map((variable) => [
+      variable.key,
+      formatVariableValueForText(appliedVariables?.[variable.key]),
+    ]),
+  );
 
 const createEmptyVariableDraft = (
   forceRequired = false,
@@ -1239,7 +1305,6 @@ export default function App() {
     setOrderBy([]);
     setQuery(emptyRuleGroup);
     setHaving(emptyRuleGroup);
-    setTestVariableInputs({});
   };
 
   const applyVisualConfig = (config: VisualQueryRequest) => {
@@ -1583,12 +1648,7 @@ export default function App() {
       ),
     );
     setTestVariableInputs(
-      Object.fromEntries(
-        queryVariables.map((variable) => [
-          variable.key,
-          formatVariableValueForText(query.applied_variables?.[variable.key]),
-        ]),
-      ),
+      buildAppliedVariableInputs(queryVariables, query.applied_variables),
     );
 
     if (nextQueryType === "sql") {
@@ -1615,33 +1675,7 @@ export default function App() {
   const deselectQuery = () => {
     setSelectedQueryId(null);
     setSavedQuerySearch("");
-    if (isSuperAdmin) {
-      setSelectedDepartment(currentDepartmentValue);
-    }
-    setQueryType("visual");
-    setSqlQuery("");
-    setQueryName("");
-    setQueryDescription("");
-    setVariables([]);
-    setTestVariableInputs({});
-    setGroupByDateField("");
-    setGroupByDateType("daily");
-    setAggregationFunc("");
-    setAggregationField("");
-    setAggregationAliasInput("");
-    setPivotEnabled(false);
-    setPivotField("");
-    setPivotValueField("");
-    setPivotFunc("");
-    setPivotValues([]);
-    setPivotValueType("string");
-    setPivotValueInput("");
-    setPivotAliasInput("");
-    setResultColumnOrder([]);
-    setFillMissingDates(false);
-    setLimit("");
-    setResults([]);
-    setTestSuccess(false);
+    setShowDeleteModal(false);
   };
 
   const resetBuilder = () => {
@@ -1679,6 +1713,10 @@ export default function App() {
 
     const queryTypeParam = searchParams.get(QUERY_TYPE_SEARCH_PARAM);
     const configParam = searchParams.get(QUERY_CONFIG_SEARCH_PARAM);
+    const variablesParam = searchParams.get(QUERY_VARIABLES_SEARCH_PARAM);
+    const testVariableInputsParam = searchParams.get(
+      QUERY_TEST_VARIABLE_INPUTS_SEARCH_PARAM,
+    );
     const savedQueryIdParam = searchParams.get(SAVED_QUERY_ID_SEARCH_PARAM);
     const queryNameParam = searchParams.get(QUERY_NAME_SEARCH_PARAM) || "";
     const queryDescriptionParam =
@@ -1689,6 +1727,8 @@ export default function App() {
     const hasUrlState =
       Boolean(queryTypeParam) ||
       Boolean(configParam) ||
+      Boolean(variablesParam) ||
+      Boolean(testVariableInputsParam) ||
       Boolean(savedQueryIdParam) ||
       Boolean(queryNameParam) ||
       Boolean(queryDescriptionParam);
@@ -1701,6 +1741,59 @@ export default function App() {
     const matchedSavedQuery = savedQueryIdParam
       ? savedQueries.find((item) => item.id === savedQueryIdParam) || null
       : null;
+    const savedQueryVariables = matchedSavedQuery
+      ? getQueryVariableDefinitions(matchedSavedQuery)
+      : [];
+    const savedQueryTestVariableInputs = matchedSavedQuery
+      ? buildAppliedVariableInputs(
+          savedQueryVariables,
+          matchedSavedQuery.applied_variables,
+        )
+      : {};
+    let urlVariableDefinitions: QueryVariableDefinition[] | undefined;
+    let urlTestVariableInputs: Record<string, string> | undefined;
+
+    try {
+      if (variablesParam) {
+        urlVariableDefinitions = normalizeQueryVariableDefinitions(
+          parseSearchParamJson(variablesParam),
+        );
+      }
+
+      if (testVariableInputsParam) {
+        urlTestVariableInputs = normalizeTestVariableInputs(
+          parseSearchParamJson(testVariableInputsParam),
+        );
+      }
+    } catch (error) {
+      toast.error("Unable to load query builder variables from URL.", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "The shared variable values are invalid.",
+      });
+    }
+
+    const applyVariablesFromUrlState = (
+      variableDefinitions: QueryVariableDefinition[],
+      activeQueryType: QueryType,
+    ) => {
+      const initialInputs =
+        urlTestVariableInputs ??
+        (matchedSavedQuery ? savedQueryTestVariableInputs : {});
+
+      setVariables(
+        variableDefinitions.map((variable) =>
+          toVariableDraft(variable, activeQueryType === "sql"),
+        ),
+      );
+      setTestVariableInputs(
+        buildTestVariableInputsForDefinitions(
+          variableDefinitions,
+          initialInputs,
+        ),
+      );
+    };
 
     setSkipNextUrlSync(true);
     setSelectedQueryId(matchedSavedQuery?.id || null);
@@ -1727,6 +1820,11 @@ export default function App() {
         } else {
           throw new Error("Invalid visual query config.");
         }
+
+        applyVariablesFromUrlState(
+          urlVariableDefinitions ?? savedQueryVariables,
+          nextQueryType,
+        );
       } catch (error) {
         toast.error("Unable to load query builder config from URL.", {
           description:
@@ -1737,6 +1835,13 @@ export default function App() {
       }
     } else if (matchedSavedQuery) {
       loadQuery(matchedSavedQuery);
+
+      if (urlVariableDefinitions || urlTestVariableInputs) {
+        applyVariablesFromUrlState(
+          urlVariableDefinitions ?? savedQueryVariables,
+          matchedSavedQuery.query_type || "visual",
+        );
+      }
     } else {
       setQueryType(nextQueryType);
 
@@ -1751,6 +1856,8 @@ export default function App() {
       if (isSuperAdmin) {
         setSelectedDepartment(currentDepartmentValue);
       }
+
+      applyVariablesFromUrlState(urlVariableDefinitions ?? [], nextQueryType);
     }
 
     setHasInitializedFromUrl(true);
@@ -2371,6 +2478,7 @@ export default function App() {
     resultColumnOrder,
     limit,
     fillMissingDates,
+    normalizedVariables,
     testVariableInputs,
   ]);
 
@@ -2401,6 +2509,25 @@ export default function App() {
 
     nextSearchParams.set(QUERY_TYPE_SEARCH_PARAM, queryType);
     nextSearchParams.set(QUERY_CONFIG_SEARCH_PARAM, serializedConfig);
+
+    if (normalizedVariables.length) {
+      nextSearchParams.set(
+        QUERY_VARIABLES_SEARCH_PARAM,
+        JSON.stringify(normalizedVariables),
+      );
+      nextSearchParams.set(
+        QUERY_TEST_VARIABLE_INPUTS_SEARCH_PARAM,
+        JSON.stringify(
+          buildTestVariableInputsForDefinitions(
+            normalizedVariables,
+            testVariableInputs,
+          ),
+        ),
+      );
+    } else {
+      nextSearchParams.delete(QUERY_VARIABLES_SEARCH_PARAM);
+      nextSearchParams.delete(QUERY_TEST_VARIABLE_INPUTS_SEARCH_PARAM);
+    }
 
     if (selectedQueryId) {
       nextSearchParams.set(SAVED_QUERY_ID_SEARCH_PARAM, selectedQueryId);
@@ -2445,6 +2572,7 @@ export default function App() {
     queryDescription,
     queryName,
     queryType,
+    normalizedVariables,
     schema,
     searchParams,
     selectedColumns,
@@ -2453,6 +2581,7 @@ export default function App() {
     skipNextUrlSync,
     sqlQuery,
     table,
+    testVariableInputs,
   ]);
 
   const saveQuery = async () => {
