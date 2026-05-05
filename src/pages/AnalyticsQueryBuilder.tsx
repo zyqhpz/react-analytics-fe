@@ -926,6 +926,7 @@ export default function App() {
   const [showSaveBlockedModal, setShowSaveBlockedModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRunningQuery, setIsRunningQuery] = useState(false);
+  const [isSavingQuery, setIsSavingQuery] = useState(false);
 
   const [testSuccess, setTestSuccess] = useState(false);
   const [hasInitializedFromUrl, setHasInitializedFromUrl] = useState(false);
@@ -2616,41 +2617,53 @@ export default function App() {
 
     const method = selectedQueryId ? "PUT" : "POST";
 
-    const res = await authFetch(url, {
-      method: method,
-      body: JSON.stringify(payload),
-    });
-
-    handleUnauthorizedStatus(res.status);
-
-    if (res.ok) {
-      const data = (await res.json()) as ResponseApiBase<Query>;
-      const savedQuery = data?.data as Query | undefined;
-
-      if (savedQuery?.id) {
-        setSelectedQueryId(savedQuery.id);
-      }
-
-      await refreshSavedQueries();
-      toast.success("Query saved successfully.");
-    } else {
-      const data = (await res.json()) as ResponseApiBase<unknown, unknown>;
-      toast.error("Failed to save query.", {
-        description: (
-          <span className="text-muted-foreground">
-            Status:{" "}
-            <span className="text-red-500 font-semibold">
-              {res.status} {res.statusText}
-            </span>
-            <br />
-            Description: {String(data?.error || "Unknown error")}
-          </span>
-        ),
+    try {
+      setIsSavingQuery(true);
+      const res = await authFetch(url, {
+        method: method,
+        body: JSON.stringify(payload),
       });
+
+      handleUnauthorizedStatus(res.status);
+
+      if (res.ok) {
+        const data = (await res.json()) as ResponseApiBase<Query>;
+        const savedQuery = data?.data as Query | undefined;
+
+        if (savedQuery?.id) {
+          setSelectedQueryId(savedQuery.id);
+        }
+
+        await refreshSavedQueries();
+        toast.success("Query saved successfully.");
+      } else {
+        const data = (await res.json()) as ResponseApiBase<unknown, unknown>;
+        toast.error("Failed to save query.", {
+          description: (
+            <span className="text-muted-foreground">
+              Status:{" "}
+              <span className="text-red-500 font-semibold">
+                {res.status} {res.statusText}
+              </span>
+              <br />
+              Description: {String(data?.error || "Unknown error")}
+            </span>
+          ),
+        });
+      }
+    } catch (error) {
+      toast.error("Unable to save query.", {
+        description:
+          error instanceof Error ? error.message : "Unexpected error.",
+      });
+    } finally {
+      setIsSavingQuery(false);
     }
   };
 
   const handleSaveButtonClick = () => {
+    if (isSavingQuery) return;
+
     if (!testSuccess) {
       setShowSaveBlockedModal(true);
       return;
@@ -4378,14 +4391,25 @@ export default function App() {
 
           <Button
             onClick={handleSaveButtonClick}
-            aria-disabled={!testSuccess}
+            disabled={isSavingQuery}
+            aria-disabled={!testSuccess || isSavingQuery}
+            aria-busy={isSavingQuery}
             className={`transition ${
-              testSuccess
+              testSuccess && !isSavingQuery
                 ? "cursor-pointer hover:scale-105 active:scale-95"
                 : "cursor-not-allowed opacity-50"
             }`}
           >
-            {selectedQueryId ? "Update Query" : "Save Query"}
+            {isSavingQuery ? (
+              <span className="flex items-center gap-2">
+                <LoaderCircle className="size-4 animate-spin" />
+                {selectedQueryId ? "Updating Query..." : "Creating Query..."}
+              </span>
+            ) : selectedQueryId ? (
+              "Update Query"
+            ) : (
+              "Create Query"
+            )}
           </Button>
         </CardContent>
       </Card>
