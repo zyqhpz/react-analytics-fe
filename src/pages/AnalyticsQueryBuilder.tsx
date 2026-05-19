@@ -283,6 +283,15 @@ type FilterReferenceSection = {
   }>;
 };
 
+type InformationReferenceSection = {
+  title: string;
+  description: string;
+  rows: Array<{
+    column: string;
+    description: string;
+  }>;
+};
+
 const QUERY_TYPE_SEARCH_PARAM = "queryType";
 const QUERY_CONFIG_SEARCH_PARAM = "config";
 const QUERY_VARIABLES_SEARCH_PARAM = "variables";
@@ -299,6 +308,39 @@ const FILTER_REFERENCE_SECTIONS: FilterReferenceSection[] = [
     rows: [
       { value: "1", indicator: "leanx" },
       { value: "2", indicator: "payright" },
+    ],
+  },
+  {
+    title: "payout.type",
+    description:
+      "The type of payout, which can be used to filter for specific payout categories.",
+    rows: [
+      { value: "payout", indicator: "normal payout type" },
+      { value: "settlement", indicator: "self-settlement by merchant" },
+    ],
+  },
+];
+
+const INFORMATION_REFERENCE_SECTIONS: InformationReferenceSection[] = [
+  {
+    title: "transaction date",
+    description:
+      "For payin and payout tables, there are 3 different transaction date fields that can be used for filtering and grouping. These fields are based on the transaction lifecycle and can provide different insights depending on the analysis needs.",
+    rows: [
+      {
+        column: "created_at",
+        description: "Timestamp when the payout was created.",
+      },
+      {
+        column: "processed_at",
+        description:
+          "Timestamp when the payout was processed and recorded in the main application.",
+      },
+      {
+        column: "provider_transaction_datetime",
+        description:
+          "Timestamp of the transaction as recorded by the payment provider. This field is more beneficial for financial reporting purposes.",
+      },
     ],
   },
 ];
@@ -2898,8 +2940,17 @@ export default function App() {
             Filter Reference
           </CardTitle>
           <p className="text-sm leading-6 text-muted-foreground">
-            Quick lookup for hardcoded filter values used by the analytics
-            layer.
+            Quick lookup for column and filter values used by the analytics
+            layer. Details of the entire analytics schema can be found{" "}
+            <a
+              href={`${import.meta.env.VITE_TABLE_REFERENCE_URL}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
+              here
+            </a>
+            .
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -2939,6 +2990,52 @@ export default function App() {
                       </TableCell>
                       <TableCell className="px-4 py-3.5 font-medium text-slate-700">
                         {row.indicator}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ))}
+
+          <Separator />
+
+          {INFORMATION_REFERENCE_SECTIONS.map((section) => (
+            <div
+              key={section.title}
+              className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/85"
+            >
+              <div className="border-b border-slate-100 bg-linear-to-r from-cyan-50/80 to-transparent px-4 py-3.5">
+                <h2 className="text-base font-semibold tracking-tight text-slate-900">
+                  {section.title}
+                </h2>
+                <p className="mt-1.5 text-sm leading-6 text-slate-600">
+                  {section.description}
+                </p>
+              </div>
+
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-100 bg-slate-50/90 hover:bg-slate-50/90">
+                    <TableHead className="w-30 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                      Column
+                    </TableHead>
+                    <TableHead className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                      Description
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {section.rows.map((row) => (
+                    <TableRow
+                      key={`${section.title}-${row.column}`}
+                      className="border-slate-100 hover:bg-transparent"
+                    >
+                      <TableCell className="px-4 py-3.5 font-semibold text-slate-900">
+                        {row.column}
+                      </TableCell>
+                      <TableCell className="px-4 py-3.5 font-medium text-slate-700">
+                        {row.description}
                       </TableCell>
                     </TableRow>
                   ))}
