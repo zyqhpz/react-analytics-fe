@@ -425,6 +425,26 @@ const createSourcePresetVariableDraft = (): QueryVariableDraft => ({
   optionsText: "LeanX=1\nPayright=2",
 });
 
+const createStartDateRangePresetVariableDraft = (): QueryVariableDraft => ({
+  draftId: safeRandomUUID(),
+  key: "startDate",
+  label: "Start Date",
+  type: "date",
+  required: true,
+  multiple: false,
+  sourceKind: "none",
+});
+
+const createEndDateRangePresetVariableDraft = (): QueryVariableDraft => ({
+  draftId: safeRandomUUID(),
+  key: "endDate",
+  label: "End Date",
+  type: "date",
+  required: true,
+  multiple: false,
+  sourceKind: "none",
+});
+
 const formatVariableOptionsText = (options?: QueryVariableOption[]) =>
   (options ?? [])
     .map((option) =>
@@ -3265,6 +3285,35 @@ export default function App() {
               className="cursor-pointer"
             >
               Add `source` Preset
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setVariables((prev) => {
+                  const existingIndex = prev.findIndex(
+                    (variable) => variable.key.trim() === "date_range",
+                  );
+
+                  const startDateRangePreset =
+                    createStartDateRangePresetVariableDraft();
+                  const endDateRangePreset =
+                    createEndDateRangePresetVariableDraft();
+
+                  if (existingIndex >= 0) {
+                    return [
+                      ...prev.slice(0, existingIndex),
+                      startDateRangePreset,
+                      endDateRangePreset,
+                      ...prev.slice(existingIndex + 1),
+                    ];
+                  }
+
+                  return [...prev, startDateRangePreset, endDateRangePreset];
+                })
+              }
+              className="cursor-pointer"
+            >
+              Add `date range` Preset
             </Button>
           </div>
         </CardContent>
