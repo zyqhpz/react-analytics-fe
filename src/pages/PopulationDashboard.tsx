@@ -1698,6 +1698,8 @@ export default function PopulationDashboard() {
   const [saving, setSaving] = useState(false);
   const [loadingDashboardStructure, setLoadingDashboardStructure] =
     useState(false);
+  const [applyingGlobalFilters, setApplyingGlobalFilters] = useState(false);
+  const [applyingWidgetFilters, setApplyingWidgetFilters] = useState(false);
 
   const [queries, setQueries] = useState<Query[]>([]);
   const [selectedQueryId, setSelectedQueryId] = useState<string>("");
@@ -2663,6 +2665,8 @@ export default function PopulationDashboard() {
           });
       let variableDefinitions = meta?.variableDefinitions ?? [];
 
+      setWidgetLoading(widgetId, chartType);
+
       try {
         variableDefinitions = await loadWidgetVariableDefinitions(queryId);
       } catch {
@@ -2674,7 +2678,6 @@ export default function PopulationDashboard() {
         variableDefinitions,
       );
 
-      setWidgetLoading(widgetId, chartType);
       const result = await fetchQueryWithData(
         queryId,
         {},
@@ -2703,6 +2706,7 @@ export default function PopulationDashboard() {
       updateWidgetTitle(widgetId, result.name || meta?.queryId || "Widget");
     },
     [
+      loadWidgetVariableDefinitions,
       renderWidgetResult,
       selectedDashboardId,
       setWidgetLoading,
@@ -2741,6 +2745,20 @@ export default function PopulationDashboard() {
       );
     }
   }, [runWidgetQuery, setWidgetError]);
+
+  const applyGlobalFilters = useCallback(async () => {
+    if (applyingGlobalFilters) {
+      return;
+    }
+
+    try {
+      setApplyingGlobalFilters(true);
+      dashboardVariablesRef.current = dashboardVariables;
+      await rerunDashboardWidgets();
+    } finally {
+      setApplyingGlobalFilters(false);
+    }
+  }, [applyingGlobalFilters, dashboardVariables, rerunDashboardWidgets]);
 
   const addWidget = useCallback(
     (opts: {
@@ -2868,14 +2886,15 @@ export default function PopulationDashboard() {
   );
 
   const applyWidgetSettings = useCallback(async () => {
-    if (!widgetSettings) {
+    if (!widgetSettings || applyingWidgetFilters) {
       return;
     }
 
     const normalizedConfig = normalizeWidgetConfig(widgetSettings.config);
-    updateWidgetConfig(widgetSettings.widgetId, normalizedConfig);
 
     try {
+      setApplyingWidgetFilters(true);
+      updateWidgetConfig(widgetSettings.widgetId, normalizedConfig);
       await runWidgetQuery(
         widgetSettings.widgetId,
         widgetSettings.queryId,
@@ -2885,14 +2904,22 @@ export default function PopulationDashboard() {
       );
       setWidgetSettings(null);
       toast.success("Widget filters updated.");
-    } catch (error) {
+    } catch {
       setWidgetError(
         widgetSettings.widgetId,
         widgetsMetaRef.current[widgetSettings.widgetId]?.chartType || "table",
       );
       toast.error("Failed to update widget filters.");
+    } finally {
+      setApplyingWidgetFilters(false);
     }
-  }, [runWidgetQuery, setWidgetError, updateWidgetConfig, widgetSettings]);
+  }, [
+    applyingWidgetFilters,
+    runWidgetQuery,
+    setWidgetError,
+    updateWidgetConfig,
+    widgetSettings,
+  ]);
 
   useEffect(() => {
     if (!showModal) return;
@@ -3750,6 +3777,9 @@ export default function PopulationDashboard() {
                     <Button
                       variant="outline"
                       className="rounded-lg border-white/15 bg-slate-800/60 text-slate-100 hover:bg-slate-700/70 hover:text-slate-100"
+                      disabled={
+                        applyingGlobalFilters || loadingDashboardStructure
+                      }
                       onClick={() => {
                         setDashboardVariables(persistedDashboardVariables);
                       }}
@@ -3758,10 +3788,20 @@ export default function PopulationDashboard() {
                     </Button>
                     <Button
                       variant="outline"
-                      className="rounded-lg border-cyan-300/30 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30 hover:text-cyan-100"
-                      onClick={() => void rerunDashboardWidgets()}
+                      className="gap-2 rounded-lg border-cyan-300/30 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30 hover:text-cyan-100 disabled:opacity-60"
+                      disabled={
+                        applyingGlobalFilters || loadingDashboardStructure
+                      }
+                      onClick={() => void applyGlobalFilters()}
                     >
-                      Apply Filters
+                      {applyingGlobalFilters ? (
+                        <>
+                          <LoaderCircle className="size-4 animate-spin" />
+                          Applying...
+                        </>
+                      ) : (
+                        "Apply Filters"
+                      )}
                     </Button>
                   </div>
                 </div>
@@ -4125,7 +4165,7 @@ export default function PopulationDashboard() {
       <Dialog
         open={Boolean(widgetSettings)}
         onOpenChange={(open) => {
-          if (!open) {
+          if (!open && !applyingWidgetFilters) {
             setWidgetSettings(null);
           }
         }}
@@ -4142,7 +4182,11 @@ export default function PopulationDashboard() {
           </DialogHeader>
 
           {widgetSettings ? (
-            <div className="max-h-[55vh] space-y-5 overflow-y-auto pr-1">
+            <div
+              className={`max-h-[55vh] space-y-5 overflow-y-auto pr-1 transition ${
+                applyingWidgetFilters ? "pointer-events-none opacity-70" : ""
+              }`}
+            >
               {!widgetSettings.variableDefinitions.length ? (
                 <div className="rounded-lg border border-dashed border-white/10 px-4 py-6 text-sm text-slate-300">
                   This query does not define runtime variables yet.
@@ -4247,16 +4291,25 @@ export default function PopulationDashboard() {
             <Button
               variant="outline"
               className="border-white/10 bg-slate-900/70 text-slate-100 hover:bg-slate-800 hover:text-slate-100"
+              disabled={applyingWidgetFilters}
               onClick={() => setWidgetSettings(null)}
             >
               Cancel
             </Button>
             <Button
               variant="outline"
-              className="border-cyan-300/30 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30 hover:text-cyan-100"
+              className="gap-2 border-cyan-300/30 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30 hover:text-cyan-100 disabled:opacity-60"
+              disabled={applyingWidgetFilters}
               onClick={() => void applyWidgetSettings()}
             >
-              Apply
+              {applyingWidgetFilters ? (
+                <>
+                  <LoaderCircle className="size-4 animate-spin" />
+                  Applying...
+                </>
+              ) : (
+                "Apply"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
